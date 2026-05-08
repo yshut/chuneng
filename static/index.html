@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>储能 AGENT</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⚡</span>
+    <span class="title">储能 AGENT</span>
+    <span class="subtitle">智能体 · ReAct · 多 Agent · RAG</span>
+  </div>
+  <div class="user-bar">
+    <label>用户</label>
+    <select id="user-select"></select>
+    <input id="new-user-input" placeholder="新用户名" />
+    <button id="add-user-btn" class="btn btn-mini">+ 新建</button>
+    <span id="model-tag" class="tag">model: -</span>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- 左：聊天 -->
+  <section class="chat-pane">
+    <div id="chat-list" class="chat-list"></div>
+
+    <div class="composer">
+      <div class="upload-bar">
+        <label class="btn btn-ghost" title="上传一个或多个文件">
+          📄 文件
+          <input id="file-input" type="file" multiple
+                 accept=".pdf,.docx,.doc,.xlsx,.xls,.png,.jpg,.jpeg,.csv,.txt"
+                 hidden />
+        </label>
+        <label class="btn btn-ghost" title="上传整个文件夹（递归）">
+          📁 文件夹
+          <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
+        </label>
+        <span id="upload-status" class="muted"></span>
+      </div>
+      <div class="input-row">
+        <textarea id="msg-input" placeholder="问点什么…（Shift+Enter 换行，Enter 发送）" rows="2"></textarea>
+        <button id="send-btn" class="btn btn-primary">发送</button>
+        <button id="stop-btn" class="btn btn-stop" disabled>停止</button>
+      </div>
+      <div class="action-row">
+        <button id="clear-btn" class="btn btn-mini">清空对话</button>
+        <button id="reset-btn" class="btn btn-mini btn-warn">彻底重置（当前用户）</button>
+        <span class="hint">提示：思考过程中点其它按钮、切换面板都不会卡，因为 SSE + 异步队列。</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 右：侧边面板 -->
+  <aside class="side-pane">
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="state">📊 状态</button>
+      <button class="tab-btn" data-tab="memory">🧠 记忆</button>
+      <button class="tab-btn" data-tab="kb">📚 知识库</button>
+      <button class="tab-btn" data-tab="files">📂 文件</button>
+    </nav>
+
+    <div class="tab-pane" data-pane="state">
+      <div class="panel-actions">
+        <button id="refresh-state-btn" class="btn btn-mini">刷新</button>
+      </div>
+      <div id="state-card" class="card"></div>
+    </div>
+
+    <div class="tab-pane hidden" data-pane="memory">
+      <div class="panel-actions">
+        <button id="refresh-memory-btn" class="btn btn-mini">刷新</button>
+      </div>
+      <div id="memory-card" class="card"></div>
+    </div>
+
+    <div class="tab-pane hidden" data-pane="kb">
+      <div class="panel-actions">
+        <button id="refresh-kb-btn" class="btn btn-mini">刷新</button>
+      </div>
+      <div id="kb-card" class="card"></div>
+
+      <div class="card-section">
+        <h4>📥 索引文件到知识库</h4>
+        <div class="upload-bar">
+          <label class="btn btn-ghost">
+            📄 选文件
+            <input id="kb-file-input" type="file" multiple
+                   accept=".txt,.md,.markdown,.pdf,.docx,.xlsx,.csv" hidden />
+          </label>
+          <label class="btn btn-ghost">
+            📁 选文件夹
+            <input id="kb-folder-input" type="file" webkitdirectory directory multiple hidden />
+          </label>
+          <span id="kb-upload-status" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="card-section">
+        <h4>🔎 直接检索</h4>
+        <div class="kb-search-row">
+          <input id="kb-query" placeholder="例如：江苏工商业分时电价 谷段" />
+          <input id="kb-k" type="number" min="1" max="20" value="5" title="返回数" />
+          <button id="kb-search-btn" class="btn btn-primary btn-mini">搜索</button>
+        </div>
+        <div id="kb-search-result" class="kb-result"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane hidden" data-pane="files">
+      <div class="panel-actions">
+        <button id="refresh-files-btn" class="btn btn-mini">刷新</button>
+        <span class="muted">input/ 目录</span>
+      </div>
+      <ul id="file-list" class="file-list"></ul>
+    </div>
+  </aside>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

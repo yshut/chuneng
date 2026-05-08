@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# 本项目运行时数据（勿提交用户记忆、向量库、上传文件）
+output/
+input/*
+!input/.gitkeep
+chromadb_data/
+.chroma/
+*.sqlite3
+*.db
+
+# 日志
+*.log
+
+# 模型缓存（若放到项目内）
+models/
+.cache/

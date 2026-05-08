@@ -1,0 +1,41 @@
+# 储能配置AGENT工具 - 依赖包
+
+# === 核心依赖（必须安装）===
+pandas>=2.0.0               # 数据处理
+openpyxl>=3.1.0             # Excel 读写（.xlsx）
+xlrd>=2.0.1                 # 旧版 .xls 读取（pandas 在 .xls 时调用此库）
+numpy>=1.24.0               # 数值计算
+tabulate>=0.9.0             # DataFrame.to_markdown() 在 Web UI 预览中使用
+
+# === 大模型SDK ===
+openai>=1.0.0               # 通义千问/文心一言 兼容SDK（含 function calling 流式 + embedding）
+
+# === Web UI（新版 FastAPI，推荐）===
+fastapi>=0.110.0            # 主框架，启动: python main.py --web
+uvicorn[standard]>=0.27.0   # ASGI 服务器
+python-multipart>=0.0.7     # 文件上传 multipart 解析
+
+# === Web UI（旧版 Gradio，兼容保留，启动: python main.py --web-gradio）===
+gradio>=4.40.0
+
+# === 图表（Web UI 图表 Tab 必需）===
+matplotlib>=3.7.0           # 年度收益曲线、敏感性热力图、成本饱图等
+Pillow>=10.0.0              # 图片处理（已被文档解析复用）
+
+# === 向量记忆（强烈推荐，海量历史语义检索）===
+chromadb>=0.4.22            # 持久化向量数据库（默认 SQLite 后端）
+
+# === 重排器 / 离线嵌入（可选）===
+# sentence-transformers>=2.6.0  # 启用 BGEReranker（python main.py --rerank）或本地 embedding；首次会下载 ~600MB 模型
+
+# === MCP 协议（让 Claude Desktop / Cursor 调用本项目工具）===
+mcp>=1.0.0                  # 官方 MCP Python SDK，启动: python main.py --mcp
+
+# === 文档解析（按需安装）===
+pdfplumber>=0.10.0          # PDF 文本提取（一级解析）
+pymupdf>=1.23.0             # PDF → 图片渲染（二级回退：视觉 LLM 解析 PDF），无系统依赖
+python-docx>=1.1.0          # Word文档解析
+
+# === OCR识别（可选，按需安装）===
+# pytesseract>=0.3.10       # 需先安装Tesseract: https://github.com/tesseract-ocr/tesseract
+# easyocr>=1.7.0            # 备用OCR引擎，首次运行会下载模型

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python main.py --demo)",
+      "Bash(ls -la *.py)",
+      "Bash(python main.py --demo --no-llm)",
+      "Bash(python main.py --demo --no-llm --investment-mode loan --loan-ratio 0.7)",
+      "Bash(python main.py --demo --no-llm --investment-mode emc --investor-share 0.7 --customer-share 0.3)",
+      "Bash(python -c \"from main import EnergyStorageAgent; print\\('Import OK'\\)\")"
+    ]
+  }
+}
