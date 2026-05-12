@@ -32,6 +32,11 @@ class ElectricityBillData:
     capacity_charge: float = 0.0        # 容量电费
     power_factor: float = 0.9           # 功率因数
     voltage_level: str = ""             # 电压等级
+    peak_price: float = 0.0             # 尖峰电价
+    high_price: float = 0.0             # 高峰电价
+    flat_price: float = 0.0             # 平段电价
+    valley_price: float = 0.0           # 谷段电价
+    demand_price: float = 0.0           # 需量电价 元/kW·月
 
 
 @dataclass
@@ -59,6 +64,11 @@ class DataExtractor:
         "容量电费": ["容量电费", "基本电费(容量)", "按容量"],
         "功率因数": ["功率因数", "力率", "cosφ"],
         "月份": ["月份", "账单月份", "日期", "账期", "抄表日期"],
+        "尖峰电价": ["尖峰电价", "尖电价", "尖峰单价", "尖段电价"],
+        "高峰电价": ["高峰电价", "峰电价", "高峰单价", "峰段电价"],
+        "平段电价": ["平段电价", "平电价", "平段单价"],
+        "谷段电价": ["谷段电价", "谷电价", "低谷电价", "谷段单价"],
+        "需量电价": ["需量电价", "需量单价", "基本电费单价"],
     }
 
     def __init__(self):
@@ -84,16 +94,20 @@ class DataExtractor:
                 logger.warning("跳过解析失败的文件: %s", doc.get("file"))
                 continue
 
+            doc_bills = []
+
             # 尝试从表格中提取
             for table in doc.get("tables", []):
                 bills = self._extract_from_table(table)
-                self.bill_data.extend(bills)
+                doc_bills.extend(bills)
 
             # 尝试从文本中提取
-            if not self.bill_data:
+            if not doc_bills:
                 text = doc.get("text", "")
                 bills = self._extract_from_text(text)
-                self.bill_data.extend(bills)
+                doc_bills.extend(bills)
+
+            self.bill_data.extend(doc_bills)
 
         # 去重并排序
         self.bill_data = self._deduplicate(self.bill_data)
@@ -168,6 +182,16 @@ class DataExtractor:
                         bill.capacity_charge = value
                     elif field_name == "功率因数":
                         bill.power_factor = value
+                    elif field_name == "尖峰电价":
+                        bill.peak_price = value
+                    elif field_name == "高峰电价":
+                        bill.high_price = value
+                    elif field_name == "平段电价":
+                        bill.flat_price = value
+                    elif field_name == "谷段电价":
+                        bill.valley_price = value
+                    elif field_name == "需量电价":
+                        bill.demand_price = value
                 except Exception:
                     continue
 
@@ -198,6 +222,10 @@ class DataExtractor:
     # ------------------------------------------------------------------
     def _extract_from_text(self, text: str) -> list[ElectricityBillData]:
         """从纯文本中提取电费数据（OCR结果）。"""
+        utility_bill = self._extract_utility_bill_text(text)
+        if utility_bill:
+            return [utility_bill]
+
         bills = []
         bill = ElectricityBillData()
 
@@ -246,6 +274,119 @@ class DataExtractor:
             bills.append(bill)
 
         return bills
+
+    def _extract_utility_bill_text(self, text: str) -> Optional[ElectricityBillData]:
+        """识别国网/电网电子账单的 Markdown/OCR 文本。
+
+        PyMuPDF4LLM 会把账单转成 Markdown，原始正则不容易命中跨行字段。
+        这里提取账单首页汇总，并结合详情页的分时电量、需量、电费项。
+        """
+        if not text:
+            return None
+        normalized = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+        normalized = normalized.replace("&nbsp;", " ")
+        compact = re.sub(r"[ \t]+", " ", normalized)
+
+        bill = ElectricityBillData()
+        bill.month = self._parse_month_value(compact, [
+            r"账单年月\s*(20\d{2})\s*[-年/]?\s*([01]?\d)",
+            r"账单周期\s*(20\d{2})[-年/]([01]?\d)",
+        ])
+        bill.total_kwh = self._first_number(compact, [
+            r"本期电量\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*(?:千瓦时|kWh)?",
+            r"本期您的电量为\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*千瓦时",
+        ])
+        bill.total_amount = self._first_number(compact, [
+            r"本期电费\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*元",
+            r"本月应付账款\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+        ])
+        bill.demand_charge = self._first_number(compact, [
+            r"容需量电费\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+        ], group=2)
+        bill.energy_charge = self._first_number(compact, [
+            r"工商业电费\s*[-+]?\d[\d,]*(?:\.\d+)?\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+        ])
+        bill.capacity_charge = 0.0
+        bill.max_demand_kw = self._first_number(compact, [
+            r"实际最大需量值为\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*千瓦",
+            r"实际最大需量\s*实际最大需量\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+            r"容需量电费\s*实际最大需量\s*实际最大需量\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+        ])
+        bill.contract_capacity_kva = self._first_number(compact, [
+            r"总合同容量为\s*([-+]?\d[\d,]*(?:\.\d+)?)\s*千瓦/?千伏安",
+            r"合同容量[:：]\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+        ])
+        bill.power_factor = self._first_number(compact, [
+            r"功率因数实际值\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+        ])
+
+        ratio_match = re.search(
+            r"峰谷分时比例为\s*([\d.]+)%[，,\s]+([\d.]+)%[，,\s]+([\d.]+)%[，,\s]+([\d.]+)%",
+            compact,
+        )
+        if ratio_match and bill.total_kwh > 0:
+            ratios = [float(ratio_match.group(i)) / 100 for i in range(1, 5)]
+            bill.peak_kwh = round(bill.total_kwh * ratios[0], 2)
+            bill.high_kwh = round(bill.total_kwh * ratios[1], 2)
+            bill.flat_kwh = round(bill.total_kwh * ratios[2], 2)
+            bill.valley_kwh = round(bill.total_kwh * ratios[3], 2)
+        else:
+            tou = self._extract_tou_from_detail(compact)
+            if tou:
+                bill.peak_kwh, bill.high_kwh, bill.flat_kwh, bill.valley_kwh = tou
+
+        if bill.power_factor == 0:
+            bill.power_factor = 0.9
+
+        if bill.total_kwh > 0 or bill.total_amount > 0:
+            return bill
+        return None
+
+    @staticmethod
+    def _first_number(text: str, patterns: list[str], group: int = 1) -> float:
+        for pattern in patterns:
+            match = re.search(pattern, text, re.S)
+            if not match:
+                continue
+            try:
+                return float(match.group(group).replace(",", ""))
+            except Exception:
+                continue
+        return 0.0
+
+    @staticmethod
+    def _parse_month_value(text: str, patterns: list[str]) -> str:
+        for pattern in patterns:
+            match = re.search(pattern, text, re.S)
+            if not match:
+                continue
+            try:
+                year = int(match.group(1))
+                month = int(match.group(2))
+                if 1 <= month <= 12:
+                    return f"{year:04d}-{month:02d}"
+            except Exception:
+                continue
+        return ""
+
+    @staticmethod
+    def _extract_tou_from_detail(text: str) -> tuple[float, float, float, float] | None:
+        values = []
+        pattern = (
+            r"计费电量\s*([-+]?\d[\d,]*(?:\.\d+)?)\s+"
+            r"([-+]?\d[\d,]*(?:\.\d+)?)\s+"
+            r"([-+]?\d[\d,]*(?:\.\d+)?)\s+"
+            r"([-+]?\d[\d,]*(?:\.\d+)?)\s+"
+            r"([-+]?\d[\d,]*(?:\.\d+)?)"
+        )
+        for match in re.finditer(pattern, text, re.S):
+            nums = [float(match.group(i).replace(",", "")) for i in range(1, 6)]
+            total, peak, high, flat, valley = nums
+            if total > 0 and abs((peak + high + flat + valley) - total) <= max(total * 0.03, 5):
+                values.append((peak, high, flat, valley))
+        if not values:
+            return None
+        return tuple(round(sum(v[i] for v in values), 2) for i in range(4))
 
     # ------------------------------------------------------------------
     # 辅助方法
@@ -336,6 +477,11 @@ class DataExtractor:
                 "需量电费(元)": b.demand_charge,
                 "容量电费(元)": b.capacity_charge,
                 "功率因数": b.power_factor,
+                "尖峰电价(元/kWh)": b.peak_price,
+                "高峰电价(元/kWh)": b.high_price,
+                "平段电价(元/kWh)": b.flat_price,
+                "谷段电价(元/kWh)": b.valley_price,
+                "需量电价(元/kW·月)": b.demand_price,
             })
 
         return pd.DataFrame(records)

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>电费账单解析</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23161922'/%3E%3Ctext x='50' y='62' font-size='48' text-anchor='middle'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/bills.css?v=20260511-revenue-unfold" />
+</head>
+<body>
+<header class="page-head">
+  <div>
+    <a class="back-link" href="/">返回 Agent</a>
+    <h1>电费账单解析</h1>
+  </div>
+  <div class="user-box">
+    <label>用户</label>
+    <select id="user-select"></select>
+  </div>
+</header>
+
+<main class="bill-page">
+  <section class="panel control-panel">
+    <div class="panel-title">
+      <h2>文件</h2>
+      <button id="refresh-files-btn" class="btn">刷新</button>
+    </div>
+    <div class="upload-row">
+      <label class="btn btn-outline">
+        上传账单
+        <input id="bill-upload-input" type="file" multiple
+               accept=".pdf,.docx,.doc,.xlsx,.xls,.png,.jpg,.jpeg,.csv,.txt" hidden />
+      </label>
+      <span id="upload-status" class="muted"></span>
+    </div>
+    <select id="bill-file-select" multiple size="14"></select>
+    <div class="parse-controls">
+      <select id="bill-parse-mode" title="解析模式">
+        <option value="auto">自动解析</option>
+        <option value="llm">大模型优先</option>
+        <option value="rules">规则解析</option>
+      </select>
+      <button id="parse-bills-btn" class="btn btn-primary">开始解析</button>
+    </div>
+    <button id="capacity-analysis-btn" class="btn btn-primary wide-btn">储能容量分析</button>
+    <p id="bill-status" class="status-text">请选择账单文件。未选择时会解析全部可用账单。</p>
+    <div id="bill-progress" class="bill-progress hidden"></div>
+  </section>
+
+  <section class="workspace">
+    <section id="bill-summary" class="summary-grid"></section>
+
+    <section id="capacity-panel" class="panel capacity-panel hidden">
+      <div class="panel-title">
+        <h2>储能容量分析</h2>
+        <span id="capacity-status" class="muted">未分析</span>
+      </div>
+      <div id="capacity-best" class="capacity-best"></div>
+      <div id="capacity-table-wrap" class="capacity-table-wrap"></div>
+    </section>
+
+    <section class="chart-grid">
+      <div class="panel chart-panel">
+        <div class="panel-title"><h2>月度电量 / 电费</h2></div>
+        <canvas id="bill-chart" height="240"></canvas>
+      </div>
+      <div class="panel chart-panel">
+        <div class="panel-title"><h2>分时电量占比</h2></div>
+        <canvas id="bill-tou-chart" height="180"></canvas>
+      </div>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="panel-title">
+        <h2>账单明细</h2>
+        <span id="table-count" class="muted">0 条</span>
+      </div>
+      <div id="bill-table-wrap" class="bill-table-wrap"></div>
+    </section>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+<script src="/static/bills-app.js?v=20260511-revenue-flow"></script>
+</body>
+</html>

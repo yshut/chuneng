@@ -8,6 +8,8 @@ from typing import Optional
 
 import pandas as pd
 
+from pdf_parser import parse_pdf
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,37 +80,11 @@ class DocumentParser:
     # PDF 解析
     # ------------------------------------------------------------------
     def _parse_pdf(self, path: Path) -> dict:
-        try:
-            import pdfplumber
-        except ImportError:
-            raise ImportError("请安装 pdfplumber: pip install pdfplumber")
+        parsed = parse_pdf(path, ocr_language=self.tesseract_lang)
+        full_text = parsed.text
+        all_tables = parsed.tables
 
-        pages = []
-        all_text_parts = []
-        all_tables = []
-
-        with pdfplumber.open(path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                page_text = page.extract_text() or ""
-                page_tables = page.extract_tables()
-
-                # 将表格转为 DataFrame
-                dfs = []
-                for tbl in page_tables:
-                    if tbl and len(tbl) > 1:
-                        df = pd.DataFrame(tbl[1:], columns=tbl[0])
-                        dfs.append(df)
-                        all_tables.append(df)
-
-                pages.append({
-                    "page": i + 1,
-                    "text": page_text,
-                    "tables": dfs,
-                })
-                all_text_parts.append(page_text)
-
-        # 如果 PDF 无可提取文本，尝试 OCR
-        full_text = "\n".join(all_text_parts).strip()
+        # 如果 PDF 无可提取文本，尝试旧 OCR 兜底。
         if not full_text:
             logger.info("PDF无可提取文本，尝试OCR...")
             full_text, ocr_tables = self._ocr_pdf(path)
@@ -119,7 +95,8 @@ class DocumentParser:
             "type": "pdf",
             "text": full_text,
             "tables": all_tables,
-            "pages": pages,
+            "pages": parsed.pages,
+            "parser": parsed.primary_engine,
         }
 
     def _ocr_pdf(self, path: Path) -> tuple[str, list[pd.DataFrame]]:

@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional
 
 import pandas as pd
 
+from capacity_gpt55 import analyze_capacity_with_bill_method, build_optimal_config_from_record, result_brief
 from config import AgentConfig, ElectricityRateConfig, StorageConfig, InvestorConfig
 from data_extractor import DataExtractor, ElectricityBillData
 from document_parser import DocumentParser
@@ -37,6 +38,7 @@ from revenue_analyzer import (
     RevenueAnalyzer,
     RevenueReport,
 )
+from storage_document_analysis import analyze_storage_documents
 from storage_optimizer import OptimalConfig, StorageOptimizer
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,7 @@ class AgentState:
     revenue_report: Optional[RevenueReport] = None
     investor_report: Optional[InvestorCustomerReport] = None
     md_report: Optional[str] = None
+    capacity_analysis: Optional[list[dict]] = None
 
     # 可选：LLM 文档解析器、报告生成器、长期记忆
     llm_parser: Any = None
@@ -317,6 +320,43 @@ def _tool_parse_files(state: AgentState, file_paths: list[str]) -> dict:
     }
 
 
+def _tool_parse_storage_related_documents(
+    state: AgentState,
+    file_paths: list[str],
+    topic: str = "分时电价、尖峰/峰/平/谷电价、需量电价、容量电费、储能套利、削峰填谷、补贴政策、并网要求",
+    index_to_kb: bool = True,
+    use_llm: bool = False,
+    k: int = 8,
+) -> dict:
+    """解析非账单类储能相关文件，并提取与储能测算相关的要点。"""
+    if not file_paths:
+        return {"error": "file_paths 不能为空"}
+
+    paths = [Path(p) for p in file_paths]
+    missing = [str(p) for p in paths if not p.exists()]
+    if missing:
+        return {"error": "以下文件不存在", "missing": missing}
+
+    result = analyze_storage_documents(
+        paths,
+        state.parser,
+        llm_client=getattr(state, "llm_client", None),
+        kb=getattr(state, "kb", None),
+        topic=topic,
+        index_to_kb=index_to_kb,
+        use_llm=use_llm,
+    )
+    if not result.get("ok"):
+        return {"error": result.get("msg", "文档分析失败"), **result}
+    return {
+        "msg": result.get("msg"),
+        "topic": result.get("topic"),
+        "documents": result.get("documents"),
+        "kb_index": result.get("kb_index"),
+        "analysis": result.get("analysis"),
+    }
+
+
 def _tool_use_demo_data(state: AgentState) -> dict:
     """加载内置 12 个月示例电费数据。"""
     df = _create_demo_df()
@@ -506,6 +546,40 @@ def _tool_optimize_storage(state: AgentState) -> dict:
         "irr": config.irr,
         "lcoe_yuan_per_kwh": config.lcoe,
     }
+
+
+def _tool_analyze_storage_capacity_bill_method(
+    state: AgentState,
+    system_efficiency: float = 0.86,
+    investment_unit_cost_yuan_per_kwh: float = 800.0,
+    demand_realization_rate: float = 0.5,
+    demand_power_cap_ratio: float = 0.75,
+    candidate_schemes: Optional[list[dict]] = None,
+) -> dict:
+    """按逐月峰谷套利 + 需量兑现 + 边际收益拐点口径测算储能容量。"""
+    if state.electricity_df is None or state.electricity_df.empty:
+        return {"error": "请先用 parse_files / use_demo_data / parse_natural_language 加载电费数据"}
+
+    result = analyze_capacity_with_bill_method(
+        state.electricity_df,
+        state.config.rate_config,
+        state.config.storage_config,
+        {
+            "system_efficiency": system_efficiency,
+            "investment_unit_cost_yuan_per_kwh": investment_unit_cost_yuan_per_kwh,
+            "demand_realization_rate": demand_realization_rate,
+            "demand_power_cap_ratio": demand_power_cap_ratio,
+            "candidate_schemes": candidate_schemes or [],
+        },
+    )
+    state.capacity_analysis = result.get("results") or []
+    best = result.get("best") or {}
+    if best:
+        state.optimal_config = build_optimal_config_from_record(best, state.config.storage_config)
+        state.revenue_report = state.analyzer.analyze(state.optimal_config, state.electricity_df)
+        state.investor_report = None
+        state.md_report = None
+    return result_brief(result)
 
 
 def _tool_analyze_revenue(state: AgentState) -> dict:
@@ -825,6 +899,36 @@ def build_default_registry() -> ToolRegistry:
     ))
 
     reg.register(Tool(
+        name="parse_storage_related_documents",
+        description="解析非账单类储能相关文件，并提取分时电价、需量电价、容量电费、补贴政策、并网要求等会影响储能测算的内容；可同时入知识库。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "file_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "文件路径列表，例如 ['input/分时电价政策.pdf', 'input/并网要求.docx']",
+                },
+                "topic": {
+                    "type": "string",
+                    "description": "关注主题，默认提取分时电价、需量电价、补贴、并网等储能相关信息",
+                },
+                "index_to_kb": {
+                    "type": "boolean",
+                    "description": "是否加入知识库，默认 true",
+                },
+                "use_llm": {
+                    "type": "boolean",
+                    "description": "是否额外调用大模型做自然语言归纳，默认 false；分时电价表优先使用程序确定性抽取。",
+                },
+                "k": {"type": "integer", "description": "保留参数，默认 8"},
+            },
+            "required": ["file_paths"],
+        },
+        func=_tool_parse_storage_related_documents,
+    ))
+
+    reg.register(Tool(
         name="use_demo_data",
         description="加载内置的 12 个月示例电费数据（无需文件）。当用户没有真实数据但想看演示时使用。",
         parameters={"type": "object", "properties": {}, "required": []},
@@ -905,6 +1009,27 @@ def build_default_registry() -> ToolRegistry:
         description="根据已加载的电费数据计算最优储能配置（电池容量、PCS功率、充放电策略、回收期等）。需先加载电费数据。",
         parameters={"type": "object", "properties": {}, "required": []},
         func=_tool_optimize_storage,
+    ))
+
+    reg.register(Tool(
+        name="analyze_storage_capacity_bill_method",
+        description="参考 GPT5.5 的账单测算法：按逐月分时电价计算峰谷套利，需量收益按兑现率折算，并用边际收益拐点推荐容量。适合用户问为什么容量和人工测算/GPT5.5不一致，或要求按账单重新测算容量。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "system_efficiency": {"type": "number", "description": "系统回路效率，默认 0.86"},
+                "investment_unit_cost_yuan_per_kwh": {"type": "number", "description": "投资单价 元/kWh，默认 800"},
+                "demand_realization_rate": {"type": "number", "description": "需量收益兑现率，默认 0.5"},
+                "demand_power_cap_ratio": {"type": "number", "description": "可削需量不超过最大需量的比例，默认 0.75"},
+                "candidate_schemes": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "候选方案，如 [{'power_kw':1250,'capacity_kwh':2500}]；为空时用 0.5-3.5MW/2h 默认档位",
+                },
+            },
+            "required": [],
+        },
+        func=_tool_analyze_storage_capacity_bill_method,
     ))
 
     reg.register(Tool(
@@ -1609,6 +1734,11 @@ def _bills_to_df(bills: list[ElectricityBillData]) -> pd.DataFrame:
             "需量电费(元)": b.demand_charge,
             "容量电费(元)": b.capacity_charge,
             "功率因数": b.power_factor,
+            "尖峰电价(元/kWh)": b.peak_price,
+            "高峰电价(元/kWh)": b.high_price,
+            "平段电价(元/kWh)": b.flat_price,
+            "谷段电价(元/kWh)": b.valley_price,
+            "需量电价(元/kW·月)": b.demand_price,
         })
     return pd.DataFrame(records)
 

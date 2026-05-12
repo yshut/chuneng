@@ -34,6 +34,7 @@ mcp>=1.0.0                  # 官方 MCP Python SDK，启动: python main.py --m
 # === 文档解析（按需安装）===
 pdfplumber>=0.10.0          # PDF 文本提取（一级解析）
 pymupdf>=1.23.0             # PDF → 图片渲染（二级回退：视觉 LLM 解析 PDF），无系统依赖
+pymupdf4llm>=1.27.2.3       # PDF → Markdown/表格/版面结构解析（优先解析）
 python-docx>=1.1.0          # Word文档解析
 
 # === OCR识别（可选，按需安装）===

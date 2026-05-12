@@ -4,7 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>储能 AGENT</title>
-<link rel="stylesheet" href="/static/style.css" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23161922'/%3E%3Ctext x='50' y='62' font-size='48' text-anchor='middle'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/style.css?v=20260511-revenue-flow" />
 </head>
 <body>
 <header class="topbar">
@@ -12,6 +13,9 @@
     <span class="logo">⚡</span>
     <span class="title">储能 AGENT</span>
     <span class="subtitle">智能体 · ReAct · 多 Agent · RAG</span>
+    <a class="top-link" href="/bills">账单解析</a>
+    <a class="top-link" href="/capacity">容量配置</a>
+    <a class="top-link" href="/revenue">收益测算</a>
   </div>
   <div class="user-bar">
     <label>用户</label>
@@ -57,13 +61,37 @@
   <!-- 右：侧边面板 -->
   <aside class="side-pane">
     <nav class="tabs">
-      <button class="tab-btn active" data-tab="state">📊 状态</button>
+      <button class="tab-btn active" data-tab="workflow">⚙️ 流程</button>
+      <button class="tab-btn" data-tab="state">📊 状态</button>
       <button class="tab-btn" data-tab="memory">🧠 记忆</button>
       <button class="tab-btn" data-tab="kb">📚 知识库</button>
       <button class="tab-btn" data-tab="files">📂 文件</button>
     </nav>
 
-    <div class="tab-pane" data-pane="state">
+    <div class="tab-pane workflow-pane" data-pane="workflow">
+      <div class="flow-card agent-card">
+        <span class="flow-step">参数调整</span>
+        <h3>Agent 临时调参窗口</h3>
+        <p>左侧对话用于临时修改电价、成本、分成、贷款等假设，也可以让 Agent 重新解析或重算。</p>
+      </div>
+      <a class="flow-card flow-link" href="/bills">
+        <span class="flow-step">Step 1</span>
+        <h3>电费账单解析</h3>
+        <p>上传账单，自动解析电量、电费、峰平谷、需量和账期，历史结果会保存到本地数据盘。</p>
+      </a>
+      <a class="flow-card flow-link" href="/capacity">
+        <span class="flow-step">Step 2</span>
+        <h3>储能容量配置分析</h3>
+        <p>根据账单峰谷情况扫描多个容量和时长组合，输出推荐配置及所有候选方案数据。</p>
+      </a>
+      <a class="flow-card flow-link" href="/revenue">
+        <span class="flow-step">Step 3</span>
+        <h3>投资收益测算</h3>
+        <p>测算峰谷套利、需量收益、客户分成、贷款影响、现金流和敏感性分析。</p>
+      </a>
+    </div>
+
+    <div class="tab-pane hidden" data-pane="state">
       <div class="panel-actions">
         <button id="refresh-state-btn" class="btn btn-mini">刷新</button>
       </div>
@@ -122,6 +150,6 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20260511-revenue-flow"></script>
 </body>
 </html>

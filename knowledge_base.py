@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from pdf_parser import parse_pdf
+
 logger = logging.getLogger("knowledge_base")
 
 
@@ -74,18 +76,10 @@ def _read_file(path: Path) -> str:
                 continue
         return path.read_text(encoding="utf-8", errors="replace")
     if suffix == ".pdf":
-        try:
-            import pdfplumber
-        except ImportError:
-            logger.warning("pdfplumber 未安装，无法解析 PDF: %s", path.name)
-            return ""
-        text = []
-        with pdfplumber.open(str(path)) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text() or ""
-                if t.strip():
-                    text.append(t)
-        return "\n\n".join(text)
+        parsed = parse_pdf(path)
+        if not parsed.text:
+            logger.warning("PDF 未提取到文本: %s", path.name)
+        return parsed.text
     if suffix in {".docx", ".doc"}:
         try:
             from docx import Document

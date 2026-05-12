@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>储能容量配置分析</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23161922'/%3E%3Ctext x='50' y='62' font-size='48' text-anchor='middle'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/bills.css?v=20260511-revenue-unfold" />
+</head>
+<body>
+<header class="page-head">
+  <div>
+    <a class="back-link" href="/">返回首页</a>
+    <h1>储能容量配置分析</h1>
+  </div>
+  <div class="user-box">
+    <label>用户</label>
+    <select id="user-select"></select>
+  </div>
+</header>
+
+<main class="analysis-page">
+  <section class="panel control-panel">
+    <div class="panel-title">
+      <h2>分析控制</h2>
+      <button id="refresh-btn" class="btn">刷新</button>
+    </div>
+    <p class="status-text">基于已解析电费账单的峰谷电量、需量和电价参数，自动扫描多个容量与时长组合。</p>
+    <label class="field-label">候选容量 kWh（可选，逗号分隔）</label>
+    <input id="capacity-input" type="text" placeholder="例如：1250, 2500, 5000" />
+    <label class="field-label">储能时长 h（可选，逗号分隔）</label>
+    <input id="duration-input" type="text" placeholder="例如：2, 3, 4" />
+    <button id="analyze-btn" class="btn btn-primary wide-btn">重新分析容量配置</button>
+    <a class="btn wide-btn" href="/revenue">进入收益测算</a>
+    <a class="btn wide-btn" href="/bills">查看账单解析</a>
+    <p id="status" class="status-text">等待加载历史分析结果。</p>
+  </section>
+
+  <section class="workspace">
+    <section class="summary-grid" id="load-summary"></section>
+    <section class="panel capacity-panel">
+      <div class="panel-title">
+        <h2>推荐配置</h2>
+        <span id="capacity-status" class="muted">未分析</span>
+      </div>
+      <div id="capacity-best"></div>
+      <div id="capacity-table-wrap" class="capacity-table-wrap"></div>
+    </section>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+<script src="/static/capacity-app.js?v=20260511-revenue-flow"></script>
+</body>
+</html>

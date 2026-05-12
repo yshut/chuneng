@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>储能收益测算</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23161922'/%3E%3Ctext x='50' y='62' font-size='48' text-anchor='middle'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/bills.css?v=20260511-param-history" />
+</head>
+<body class="revenue-body">
+<header class="page-head">
+  <div>
+    <a class="back-link" href="/">返回首页</a>
+    <h1>储能收益测算</h1>
+  </div>
+  <div class="user-box">
+    <label>用户</label>
+    <select id="user-select"></select>
+  </div>
+</header>
+
+<main class="analysis-page revenue-page">
+  <section class="panel control-panel revenue-controls">
+    <div class="panel-title">
+      <h2>参数输入</h2>
+      <button id="reset-defaults-btn" class="btn">读取推荐配置</button>
+    </div>
+    <div class="param-history-box">
+      <div class="param-history-title">
+        <span>历史参数</span>
+        <button id="refresh-history-btn" class="btn small-btn">刷新</button>
+      </div>
+      <div class="param-history-row">
+        <select id="param-history-select" aria-label="历史参数"></select>
+        <button id="load-history-btn" class="btn">载入</button>
+      </div>
+    </div>
+    <div id="param-grid" class="param-grid"></div>
+    <div class="revenue-action-grid">
+      <button id="calculate-btn" class="btn btn-primary wide-btn">重新测算收益</button>
+      <button id="export-report-btn" class="btn wide-btn">导出Word+MD报告</button>
+      <a class="btn wide-btn" href="/capacity">查看容量配置</a>
+    </div>
+    <p id="status" class="status-text">等待加载收益测算。</p>
+    <div id="report-links" class="report-links hidden"></div>
+  </section>
+
+  <section class="workspace">
+    <section id="summary-grid" class="summary-grid"></section>
+
+    <section class="chart-grid revenue-chart-grid">
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>成本构成</h2></div>
+        <div id="cost-wrap" class="bill-table-wrap small-table"></div>
+      </section>
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>贷款影响</h2></div>
+        <div id="loan-wrap" class="loan-box"></div>
+      </section>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="panel-title"><h2>有贷款 / 无贷款对比</h2></div>
+      <div id="loan-impact-wrap" class="loan-box loan-impact-grid"></div>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="panel-title"><h2>项目现金流表</h2></div>
+      <div id="cashflow-wrap" class="bill-table-wrap"></div>
+    </section>
+
+    <section class="chart-grid revenue-chart-grid">
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>客户收益表</h2></div>
+        <div id="customer-wrap" class="bill-table-wrap"></div>
+      </section>
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>资方收益表</h2></div>
+        <div id="investor-wrap" class="bill-table-wrap"></div>
+      </section>
+    </section>
+
+    <section class="chart-grid revenue-chart-grid">
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>敏感性分析</h2></div>
+        <div id="sensitivity-wrap" class="bill-table-wrap small-table"></div>
+      </section>
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>循环次数敏感性</h2></div>
+        <div id="cycle-wrap" class="bill-table-wrap small-table"></div>
+      </section>
+    </section>
+
+    <section class="chart-grid revenue-chart-grid">
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>静态回收期矩阵</h2></div>
+        <div id="payback-matrix-wrap" class="bill-table-wrap small-table"></div>
+      </section>
+      <section class="panel table-panel">
+        <div class="panel-title"><h2>分成比例敏感性</h2></div>
+        <div id="share-wrap" class="bill-table-wrap small-table"></div>
+      </section>
+    </section>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+<script src="/static/revenue-app.js?v=20260511-param-history"></script>
+</body>
+</html>
