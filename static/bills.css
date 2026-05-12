@@ -733,7 +733,11 @@ body {
 }
 
 @media (max-width: 760px) {
-  body { overflow: auto; }
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow: auto;
+  }
 
   .page-head {
     height: auto;
@@ -817,6 +821,7 @@ body {
 
   .bill-page,
   .analysis-page {
+    flex: 0 0 auto;
     height: auto;
     min-height: 0;
     display: flex;
@@ -831,10 +836,10 @@ body {
     position: static;
   }
   .revenue-page .control-panel {
-    position: relative;
-    max-height: min(54dvh, 520px);
-    overflow: auto;
-    overscroll-behavior: contain;
+    position: static;
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
   }
   .revenue-page .revenue-action-grid {
     order: 3;
@@ -856,6 +861,9 @@ body {
   }
   .control-panel,
   .workspace {
+    flex: 0 0 auto;
+    align-self: stretch;
+    min-height: auto;
     overflow: visible;
     padding-right: 0;
   }
