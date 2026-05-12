@@ -1,13 +1,14 @@
 """储能配置AGENT - 大模型统一客户端
 支持通义千问(Qwen)和文心一言(Wenxin)，提供统一调用接口。
 """
+from __future__ import annotations
 
 import base64
 import json
 import logging
 import os
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Dict, Generator, Optional
 
 from config import LLMConfig
 
@@ -263,7 +264,7 @@ class LLMClient:
         stream = self._client.chat.completions.create(**kwargs)
 
         # tool_calls 分片累积器：index -> {id, type, function: {name, arguments}}
-        tool_calls_buf: dict[int, dict] = {}
+        tool_calls_buf: Dict[int, dict] = {}
         text_buf: list[str] = []
 
         for chunk in stream:

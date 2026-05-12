@@ -73,8 +73,9 @@ def _normalize_price(value: Any, default: float) -> float:
     price = _to_float(value, 0.0)
     if price <= 0:
         return default
-    # Some tariff files use fen/kWh or cent/kWh.
-    if price > 5:
+    # Some tariff files use fen/kWh or cent/kWh. Values just above 5 can be
+    # legitimate C&I Yuan/kWh tariffs, so only normalize clearly scaled input.
+    if price >= 10:
         price = price / 100
     return price
 

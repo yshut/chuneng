@@ -13,9 +13,12 @@ def battery_selection_advice(state):
     if cfg is None:
         return {"error": "请先调用 optimize_storage"}
 
-    capacity = cfg.battery_capacity_kwh
-    c_rate = cfg.charge_discharge_ratio
-    duration = cfg.duration_hours
+    try:
+        capacity = float(getattr(cfg, "battery_capacity_kwh"))
+        c_rate = float(getattr(cfg, "charge_discharge_ratio"))
+        duration = float(getattr(cfg, "duration_hours"))
+    except (TypeError, ValueError):
+        return {"error": "当前最优配置缺少容量、倍率或时长字段，请重新调用 optimize_storage"}
 
     # 简单决策逻辑
     if capacity < 500:

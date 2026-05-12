@@ -2,6 +2,8 @@
 实现自然语言交互、多方案对比决策、智能问答。
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import sys

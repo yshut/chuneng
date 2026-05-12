@@ -3,6 +3,7 @@
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -371,18 +372,9 @@ class StorageOptimizer:
 
     @staticmethod
     def _compute_irr(cash_flows: list, max_iter: int = 1000, tol: float = 1e-8) -> float:
-        """使用牛顿法计算IRR。"""
-        rate = 0.1  # 初始猜测
-        for _ in range(max_iter):
-            npv = sum(cf / (1 + rate) ** i for i, cf in enumerate(cash_flows))
-            dnpv = sum(-i * cf / (1 + rate) ** (i + 1) for i, cf in enumerate(cash_flows))
-            if abs(dnpv) < 1e-12:
-                break
-            new_rate = rate - npv / dnpv
-            if abs(new_rate - rate) < tol:
-                return new_rate
-            rate = new_rate
-        return rate
+        """牛顿法 IRR，求不出来时返回 0.0。统一实现见 finance_utils.irr_or_default。"""
+        from finance_utils import irr_or_default
+        return irr_or_default(list(cash_flows), default=0.0, max_iter=max_iter, tol=tol)
 
     # ------------------------------------------------------------------
     # 输出

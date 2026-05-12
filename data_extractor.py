@@ -2,6 +2,8 @@
 从解析后的文档中提取电费相关数据，转换为结构化Excel。
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from dataclasses import dataclass, field
@@ -409,19 +411,29 @@ class DataExtractor:
         if value is None:
             return ""
         s = str(value).strip()
-        # 尝试多种格式
-        for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%Y年%m月",
-                     "%Y-%m", "%Y/%m", "%Y%m"]:
+        if not s:
+            return ""
+        if re.fullmatch(r"\d{6}", s):
+            return f"{s[:4]}-{s[4:6]}"
+        normalized = (
+            s.replace("年", "-")
+             .replace("月", "-")
+             .replace("日", "")
+             .replace("/", "-")
+             .replace(".", "-")
+        )
+        normalized = re.sub(r"-+", "-", normalized).strip("-")
+        for fmt in ["%Y-%m-%d", "%Y-%m", "%Y%m%d", "%Y%m"]:
             try:
-                dt = datetime.strptime(s[:len(fmt.replace('%', ' ').strip())], fmt)
+                dt = datetime.strptime(normalized[:10], fmt)
                 return dt.strftime("%Y-%m")
             except ValueError:
                 continue
         # 尝试正则
-        m = re.search(r"(\d{4})\D*(\d{1,2})", s)
+        m = re.search(r"(\d{4})\D*(\d{1,2})", normalized)
         if m:
             return f"{m.group(1)}-{int(m.group(2)):02d}"
-        return s
+        return ""
 
     def _estimate_time_of_use(self, bill: ElectricityBillData) -> ElectricityBillData:
         """在缺少分时电量时，按典型比例估算。"""

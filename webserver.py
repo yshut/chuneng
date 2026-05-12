@@ -20,6 +20,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent_core import StorageAgent
+from capacity_llm_review import llm_review_capacity
 from capacity_gpt55 import (
     DEFAULT_NA_CELL_COST_YUAN_PER_WH,
     DEFAULT_STORAGE_COST_BASIS,
@@ -45,16 +47,19 @@ from storage_document_analysis import analyze_storage_documents
 
 logger = logging.getLogger(__name__)
 
-DATA_ROOT = Path(os.environ.get("CHUNENG_DATA_ROOT", "/var/lib/chuneng-agent")).resolve()
+DEFAULT_DATA_ROOT = Path(__file__).parent / "data"
+DATA_ROOT = Path(os.environ.get("CHUNENG_DATA_ROOT", str(DEFAULT_DATA_ROOT))).resolve()
 INPUT_DIR = (DATA_ROOT / "input").resolve()
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = Path(__file__).parent / "static"
+LLM_CONFIG_FILE = (DATA_ROOT / "llm_config.json").resolve()
+LLM_PROVIDERS = ("qwen", "wenxin", "mimo", "openai_compat")
 
 SUPPORTED_UPLOAD_EXTS = {".pdf", ".docx", ".doc", ".xlsx", ".xls",
-                         ".png", ".jpg", ".jpeg", ".csv", ".txt"}
+                         ".png", ".jpg", ".jpeg", ".webp", ".csv", ".txt"}
 SUPPORTED_KB_EXTS = {".txt", ".md", ".markdown", ".pdf", ".docx", ".xlsx", ".csv"}
 SUPPORTED_BILL_EXTS = {".pdf", ".docx", ".doc", ".xlsx", ".xls",
-                       ".png", ".jpg", ".jpeg", ".csv", ".txt"}
+                       ".png", ".jpg", ".jpeg", ".webp", ".csv", ".txt"}
 REPORT_FILE_EXTS = {".zip", ".docx", ".md", ".png"}
 BILL_COLUMNS = [
     "月份", "总电量(kWh)", "尖峰电量(kWh)", "高峰电量(kWh)", "平段电量(kWh)",
@@ -69,17 +74,169 @@ DEFAULT_PCS_EMS_BMS_COST_YUAN_PER_WH = 0.025
 DEFAULT_GRID_CONNECTION_COST_PER_KW = 10
 DEFAULT_CIVIL_FIRE_COST_PER_KW = 0
 DEFAULT_INCLUDED_COST_RATE = 0.0
+_REPORT_DOWNLOAD_TOKENS: dict[str, Path] = {}
+
+
+# ======================================================================
+# LLM 配置持久化
+# ======================================================================
+def _load_llm_config_file() -> dict:
+    """从持久化文件中读取 LLM 配置（如果存在）。"""
+    if not LLM_CONFIG_FILE.exists():
+        return {}
+    try:
+        with open(LLM_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        logger.exception("读取 LLM 配置失败: %s", LLM_CONFIG_FILE)
+        return {}
+
+
+def _save_llm_config_file(data: dict) -> None:
+    """持久化 LLM 配置到文件。"""
+    try:
+        LLM_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LLM_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.exception("保存 LLM 配置失败: %s", LLM_CONFIG_FILE)
+        raise
+
+
+def _apply_llm_config_dict(config: AgentConfig, overrides: dict) -> None:
+    """把 overrides 字典里的字段应用到 config.llm_config。"""
+    lc = config.llm_config
+    if not isinstance(overrides, dict):
+        return
+    provider = (overrides.get("provider") or "").strip().lower()
+    if provider in LLM_PROVIDERS:
+        lc.provider = provider
+    for key in ("base_url", "model", "vision_model", "api_key"):
+        value = overrides.get(key)
+        if isinstance(value, str) and value:
+            setattr(lc, key, value)
+    if "temperature" in overrides:
+        try:
+            lc.temperature = float(overrides["temperature"])
+        except (TypeError, ValueError):
+            pass
+    if "max_tokens" in overrides:
+        try:
+            lc.max_tokens = int(overrides["max_tokens"])
+        except (TypeError, ValueError):
+            pass
+    if "enabled" in overrides:
+        lc.enabled = bool(overrides["enabled"])
+
+
+def _mask_api_key(key: str | None) -> str:
+    """脱敏 API Key —— 只显示前 6 位和后 4 位。"""
+    if not key:
+        return ""
+    if len(key) <= 12:
+        return "*" * len(key)
+    return f"{key[:6]}{'*' * 6}{key[-4:]}"
+
+
+def _llm_provider_defaults_public() -> dict:
+    """对外暴露各 provider 的默认 base_url / model，让前端切换 provider 时能自动填充。"""
+    try:
+        from llm_client import PROVIDER_DEFAULTS  # type: ignore
+        return {
+            p: {
+                "base_url": d.get("base_url", ""),
+                "model": d.get("model", ""),
+                "vision_model": d.get("vision_model", ""),
+                "env_key": d.get("env_key", ""),
+            }
+            for p, d in PROVIDER_DEFAULTS.items()
+        }
+    except Exception:
+        return {}
+
+
+def _verify_llm_client(config: AgentConfig) -> tuple[bool, str]:
+    """用当前 llm_config 试着创建一个 LLMClient，看是否能初始化成功。
+
+    不发起任何网络请求；只验证「key/url/model 是否完整、能创建出底层 client 对象」。
+    """
+    try:
+        from llm_client import LLMClient
+        client = LLMClient(config.llm_config)
+        if client.available:
+            return True, ""
+        # 找一下 PROVIDER_DEFAULTS 里这个 provider 对应的 env_key，给个具体提示
+        try:
+            from llm_client import PROVIDER_DEFAULTS  # type: ignore
+            env_key = PROVIDER_DEFAULTS.get(config.llm_config.provider, {}).get("env_key", "")
+        except Exception:
+            env_key = ""
+        if not (config.llm_config.api_key or (env_key and os.environ.get(env_key))):
+            return False, f"未配置 API Key（请在网页里填写，或设置环境变量 {env_key or '<provider env_key>'}）"
+        if not config.llm_config.base_url:
+            return False, "未配置 Base URL"
+        return False, "客户端未能初始化，请检查 provider / base_url / api_key 是否匹配"
+    except Exception as exc:
+        return False, f"客户端初始化抛出异常：{exc}"
+
+
+def _llm_config_public(config: AgentConfig) -> dict:
+    """以前端可读的形式返回 LLM 配置（API Key 脱敏，含可用 provider 列表）。"""
+    lc = config.llm_config
+    try:
+        from llm_client import PROVIDER_DEFAULTS  # type: ignore
+        defaults = PROVIDER_DEFAULTS.get(lc.provider, {})
+        env_key_name = defaults.get("env_key", "")
+        env_key = os.environ.get(env_key_name, "") if env_key_name else ""
+    except Exception:
+        defaults, env_key_name, env_key = {}, "", ""
+    effective_key = lc.api_key or env_key
+    client_ok, client_error = _verify_llm_client(config)
+    return {
+        "provider": lc.provider,
+        "providers": list(LLM_PROVIDERS),
+        "provider_defaults": _llm_provider_defaults_public(),
+        "base_url": lc.base_url or defaults.get("base_url", ""),
+        "model": lc.model,
+        "vision_model": lc.vision_model,
+        "api_key": _mask_api_key(effective_key),
+        "api_key_set": bool(effective_key),
+        "api_key_from_env": bool(not lc.api_key and env_key),
+        "api_key_from_file": bool(lc.api_key),
+        "env_key_name": env_key_name,
+        "temperature": lc.temperature,
+        "max_tokens": lc.max_tokens,
+        "enabled": lc.enabled,
+        "persisted": LLM_CONFIG_FILE.exists(),
+        "client_ok": client_ok,
+        "client_error": client_error,
+    }
 
 
 # ======================================================================
 # AgentManager（多用户隔离）
 # ======================================================================
 class AgentManager:
+    # 每个用户保留的最近事件数（足够覆盖一轮完整对话）
+    LIVE_EVENT_LIMIT = 800
+
     def __init__(self, config: AgentConfig, **kwargs):
         self.config = config
         self.kwargs = kwargs
         self.agents: dict[str, StorageAgent] = {}
         self._lock = threading.Lock()
+        # 每用户的实时事件流：{uid: {"running": bool, "events": [...], "version": int, "started_at": float, "last_user_message": str}}
+        self.live: dict[str, dict] = {}
+        self._live_lock = threading.Lock()
+        # 启动时加载持久化的 LLM 配置（覆盖 CLI 默认 / 环境变量）
+        persisted = _load_llm_config_file()
+        if persisted:
+            _apply_llm_config_dict(self.config, persisted)
+            logger.info(
+                "已加载持久化 LLM 配置: provider=%s, model=%s",
+                self.config.llm_config.provider, self.config.llm_config.model,
+            )
 
     def get(self, user_id: str) -> StorageAgent:
         uid = safe_user_id(user_id)
@@ -94,6 +251,101 @@ class AgentManager:
                 except Exception:
                     logger.exception("加载本地历史状态失败: user_id=%s", uid)
             return self.agents[uid]
+
+    def reset_agents(self) -> int:
+        """清空已构建的 agent 缓存。下一次 get() 会按新配置重建。返回清除数量。"""
+        with self._lock:
+            count = len(self.agents)
+            self.agents.clear()
+        return count
+
+    # ------------------------------------------------------------------
+    # 实时事件流（用于浏览器断线重连）
+    # ------------------------------------------------------------------
+    def live_begin(self, user_id: str, user_message: str) -> None:
+        uid = safe_user_id(user_id)
+        with self._live_lock:
+            self.live[uid] = {
+                "running": True,
+                "events": [],
+                "version": 0,
+                "started_at": time.time(),
+                "ended_at": None,
+                "last_user_message": user_message,
+            }
+
+    def live_push(self, user_id: str, event: dict) -> None:
+        uid = safe_user_id(user_id)
+        with self._live_lock:
+            slot = self.live.get(uid)
+            if not slot:
+                return
+            slot["events"].append(event)
+            slot["version"] += 1
+            # 裁剪过长的事件队列
+            if len(slot["events"]) > self.LIVE_EVENT_LIMIT:
+                drop = len(slot["events"]) - self.LIVE_EVENT_LIMIT
+                slot["events"] = slot["events"][drop:]
+
+    def live_end(self, user_id: str) -> None:
+        uid = safe_user_id(user_id)
+        with self._live_lock:
+            slot = self.live.get(uid)
+            if not slot:
+                return
+            slot["running"] = False
+            slot["ended_at"] = time.time()
+
+    def live_snapshot(self, user_id: str, since: int = 0) -> dict:
+        """返回 since 之后的所有事件 + running 状态。供前端断线重连用。"""
+        uid = safe_user_id(user_id)
+        with self._live_lock:
+            slot = self.live.get(uid)
+            if not slot:
+                return {"running": False, "version": 0, "events": [], "exists": False}
+            version = slot["version"]
+            evs = slot["events"]
+            # version 是累计事件数；since 表示"我已经处理过的事件数"
+            if since < 0:
+                since = 0
+            if since >= version:
+                tail = []
+            else:
+                # 当 events 被裁剪过时，evs 可能比 version 短
+                start = max(0, len(evs) - (version - since))
+                tail = list(evs[start:])
+            return {
+                "running": slot["running"],
+                "version": version,
+                "events": tail,
+                "exists": True,
+                "started_at": slot.get("started_at"),
+                "ended_at": slot.get("ended_at"),
+                "last_user_message": slot.get("last_user_message", ""),
+            }
+
+    def apply_llm_overrides(self, overrides: dict, persist: bool = True) -> dict:
+        """更新 LLM 配置并热重载。返回新的公开配置。"""
+        _apply_llm_config_dict(self.config, overrides)
+        if persist:
+            previous = _load_llm_config_file()
+            payload = {
+                "provider": self.config.llm_config.provider,
+                "base_url": self.config.llm_config.base_url,
+                "model": self.config.llm_config.model,
+                "vision_model": self.config.llm_config.vision_model,
+                "temperature": self.config.llm_config.temperature,
+                "max_tokens": self.config.llm_config.max_tokens,
+                "enabled": self.config.llm_config.enabled,
+            }
+            # 仅在用户填了非空 key 时才保存；否则不写明文（仍用环境变量）
+            if overrides.get("api_key"):
+                payload["api_key"] = self.config.llm_config.api_key
+            elif previous.get("api_key"):
+                payload["api_key"] = previous["api_key"]
+            _save_llm_config_file(payload)
+        self.reset_agents()
+        return _llm_config_public(self.config)
 
     def list_users(self) -> list[str]:
         try:
@@ -790,6 +1042,19 @@ def _capacity_analysis_sync(agent: StorageAgent, req: dict | None = None) -> dic
         except ValueError as e:
             raise HTTPException(422, str(e))
 
+        # 可选：让大模型做一次综合评审，覆盖 best
+        use_llm_review = bool(req.get("use_llm_review"))
+        user_preference = str(req.get("user_preference") or "").strip()
+        if use_llm_review and result.get("results"):
+            review = llm_review_capacity(
+                result,
+                getattr(agent.state, "llm_client", None),
+                user_preference=user_preference,
+            )
+            result["llm_review"] = review
+            if review and review.get("ok") and review.get("chosen_config"):
+                result["best"] = review["chosen_config"]
+
         best_record = result.get("best") or {}
         best_cfg = build_optimal_config_from_record(best_record, storage)
         agent.state.optimal_config = best_cfg
@@ -797,6 +1062,10 @@ def _capacity_analysis_sync(agent: StorageAgent, req: dict | None = None) -> dic
         agent.state.investor_report = None
         agent.state.md_report = None
         agent.state.capacity_analysis = result.get("results") or []
+        agent.state.capacity_context = {
+            "load_profile": result.get("load_profile") or {},
+            "assumptions": result.get("assumptions") or {},
+        }
         persisted = _persist_capacity(agent, result)
         try:
             persisted["revenue_model"] = _refresh_revenue_for_current_capacity(agent, req.get("user_id", agent.user_id))
@@ -931,7 +1200,10 @@ def _capacity_analysis_sync(agent: StorageAgent, req: dict | None = None) -> dic
 
 
 REVENUE_MODEL_VERSION = "excel-11-20260509-v2"
-REVENUE_TEMPLATE_PATH = "/opt/download-hub/storage/11_20260509160117.xlsx"
+REVENUE_TEMPLATE_PATH = os.environ.get(
+    "CHUNENG_REVENUE_TEMPLATE_PATH",
+    str(Path(__file__).parent / "templates" / "11_20260509160117.xlsx"),
+)
 
 
 def _default_revenue_params(agent: StorageAgent) -> dict:
@@ -1010,10 +1282,23 @@ def _default_revenue_params(agent: StorageAgent) -> dict:
 
 
 def _as_rate(value: Any, default: float = 0.0) -> float:
+    """把用户填的比率字段归一为 0~1 的小数。
+
+    本项目里 _as_rate 处理的所有字段（利率、效率、衰减、分成等）在小数形式下
+    都不会超过 1，所以采用安全的双向归一：
+      - abs(raw) <= 1 ：已经是小数形式（0.042、0.5、0.8），直接保留
+      - 1 < abs(raw) <= 100 ：是百分比形式（4.2、50、80），除以 100
+      - abs(raw) > 100 ：明显异常，按默认值兜底
+    """
     raw = _safe_float(value, 8, default)
     if raw is None:
         return default
-    return raw / 100 if abs(raw) > 1.5 else raw
+    abs_raw = abs(raw)
+    if abs_raw > 100:
+        return default
+    if abs_raw > 1:
+        return raw / 100
+    return raw
 
 
 def _bool_param(value: Any) -> bool:
@@ -1121,23 +1406,9 @@ def _loan_schedule(loan_amount: float, annual_rate: float, loan_years: int, tota
 
 
 def _irr(cash_flows: list[float], max_iter: int = 1000, tol: float = 1e-7) -> float | None:
-    if not cash_flows or not any(v < 0 for v in cash_flows) or not any(v > 0 for v in cash_flows):
-        return None
-    rate = 0.1
-    for _ in range(max_iter):
-        if rate <= -0.99:
-            rate = -0.9
-        npv = sum(cf / (1 + rate) ** i for i, cf in enumerate(cash_flows))
-        dnpv = sum(-i * cf / (1 + rate) ** (i + 1) for i, cf in enumerate(cash_flows))
-        if abs(dnpv) < 1e-12:
-            break
-        new_rate = rate - npv / dnpv
-        if not math.isfinite(new_rate):
-            break
-        if abs(new_rate - rate) < tol:
-            return new_rate
-        rate = new_rate
-    return rate if math.isfinite(rate) else None
+    """收益模型用的 IRR。统一实现见 finance_utils.irr。"""
+    from finance_utils import irr as _shared_irr
+    return _shared_irr(list(cash_flows), max_iter=max_iter, tol=tol)
 
 
 def _compute_revenue_model(agent: StorageAgent, req: dict | None = None) -> dict:
@@ -2257,16 +2528,22 @@ def _build_revenue_report_package(agent: StorageAgent, data: dict) -> dict:
         if images_dir.exists():
             for image in images_dir.glob("*.png"):
                 zf.write(image, image.relative_to(report_dir.parent))
+    download_urls = {}
+    for key, file_path in {"zip": zip_path, "docx": docx_path, "md": md_path}.items():
+        token = hashlib.sha256(
+            f"{agent.user_id}:{file_path.resolve()}:{stamp}:{os.urandom(16).hex()}".encode("utf-8")
+        ).hexdigest()[:32]
+        _REPORT_DOWNLOAD_TOKENS[token] = file_path.resolve()
+        download_urls[f"{key}_url"] = (
+            f"/api/reports/download?user_id={agent.user_id}&token={token}"
+        )
     return {
         "ok": True,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "report_dir": str(report_dir),
-        "zip_path": str(zip_path),
-        "docx_path": str(docx_path),
-        "md_path": str(md_path),
-        "zip_url": f"/api/reports/download?user_id={agent.user_id}&path={zip_path.relative_to(reports_dir).as_posix()}",
-        "docx_url": f"/api/reports/download?user_id={agent.user_id}&path={docx_path.relative_to(reports_dir).as_posix()}",
-        "md_url": f"/api/reports/download?user_id={agent.user_id}&path={md_path.relative_to(reports_dir).as_posix()}",
+        "zip_file": zip_path.name,
+        "docx_file": docx_path.name,
+        "md_file": md_path.name,
+        **download_urls,
     }
 
 
@@ -2276,9 +2553,12 @@ def _build_revenue_report_package(agent: StorageAgent, data: dict) -> dict:
 def create_app(manager: AgentManager) -> FastAPI:
     app = FastAPI(title="储能 AGENT", version="2.0")
 
+    cors_origins_env = os.environ.get("CHUNENG_CORS_ORIGINS", "http://127.0.0.1:7860,http://localhost:7860")
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins or ["http://127.0.0.1:7860", "http://localhost:7860"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -2345,6 +2625,108 @@ def create_app(manager: AgentManager) -> FastAPI:
         manager.get(uid)
         return {"ok": True, "user_id": safe_user_id(uid), "users": manager.list_users()}
 
+    # --------------------------------------------------------------
+    # LLM 配置（API URL / Key / Model）
+    # --------------------------------------------------------------
+    @app.get("/api/llm/config")
+    async def get_llm_config():
+        return _llm_config_public(manager.config)
+
+    @app.post("/api/llm/config")
+    async def update_llm_config(req: dict):
+        if not isinstance(req, dict):
+            raise HTTPException(400, "请求体必须是 JSON 对象")
+        try:
+            data = manager.apply_llm_overrides(req, persist=True)
+        except Exception as exc:
+            logger.exception("更新 LLM 配置失败")
+            raise HTTPException(500, f"保存配置失败: {exc}")
+        return {"ok": True, "config": data}
+
+    @app.post("/api/llm/clear-key")
+    async def clear_llm_key():
+        """清空保存在文件里的 api_key，回退到环境变量。仅清空 key，其它字段保留。"""
+        try:
+            current = _load_llm_config_file() or {}
+            current.pop("api_key", None)
+            _save_llm_config_file(current)
+            manager.config.llm_config.api_key = ""
+            manager.reset_agents()
+        except Exception as exc:
+            logger.exception("清空 LLM API Key 失败")
+            raise HTTPException(500, f"清空失败: {exc}")
+        return {"ok": True, "config": _llm_config_public(manager.config)}
+
+    @app.post("/api/llm/test")
+    async def test_llm_config(req: dict):
+        """用临时配置测试一次对话，不修改全局状态。"""
+        from copy import deepcopy
+        from llm_client import LLMClient
+
+        if not isinstance(req, dict):
+            raise HTTPException(400, "请求体必须是 JSON 对象")
+        # 深拷贝当前配置，叠加用户传入的字段
+        tmp_cfg = deepcopy(manager.config.llm_config)
+
+        def _set(field, value, cast=str):
+            if value is None or value == "":
+                return
+            try:
+                setattr(tmp_cfg, field, cast(value))
+            except (TypeError, ValueError):
+                pass
+
+        provider = (req.get("provider") or "").strip().lower()
+        if provider in LLM_PROVIDERS:
+            tmp_cfg.provider = provider
+        _set("base_url", req.get("base_url"))
+        _set("model", req.get("model"))
+        _set("vision_model", req.get("vision_model"))
+        _set("api_key", req.get("api_key"))
+        _set("temperature", req.get("temperature"), float)
+        _set("max_tokens", req.get("max_tokens"), int)
+
+        def _do_test():
+            client = LLMClient(tmp_cfg)
+            if not client.available:
+                raise RuntimeError("LLM 客户端未能初始化，请检查 API Key / Base URL")
+            reply = client.chat(
+                messages=[
+                    {"role": "system", "content": "回复一个字'好'即可。"},
+                    {"role": "user", "content": "ping"},
+                ],
+                max_tokens=8,
+            )
+            return reply or ""
+
+        try:
+            reply = await asyncio.to_thread(_do_test)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "provider": tmp_cfg.provider, "model": tmp_cfg.model}
+        return {
+            "ok": True,
+            "reply": reply.strip()[:120],
+            "provider": tmp_cfg.provider,
+            "model": tmp_cfg.model,
+            "base_url": tmp_cfg.base_url,
+        }
+
+    @app.get("/api/chat/live")
+    async def get_chat_live(
+        user_id: str | None = None,
+        since: int = 0,
+        x_auth_user: str | None = Header(default=None),
+    ):
+        """断线重连用：返回当前用户的"还在生成 / 已生成的最新事件"。
+
+        - `since` = 已经收到的事件个数（version），服务端只返回更新的部分。
+        - 前端策略：页面加载完成后调用 since=0；如果 running=true 就每 800ms 轮询一次，
+          每次拿 `version` 当作下一次的 `since`，直到 running=false。
+        """
+        uid = _effective_user_id(user_id, x_auth_user)
+        snap = manager.live_snapshot(uid, since=since)
+        return snap
+
     @app.get("/api/state")
     async def get_state(user_id: str | None = None, x_auth_user: str | None = Header(default=None)):
         agent = await asyncio.to_thread(manager.get, _effective_user_id(user_id, x_auth_user))
@@ -2388,6 +2770,12 @@ def create_app(manager: AgentManager) -> FastAPI:
             if role == "tool":
                 continue
             content = m.get("content") or ""
+            if role == "user" and isinstance(content, str):
+                if "## 当前用户输入\n" in content:
+                    content = content.split("## 当前用户输入\n")[-1].strip()
+                elif "（这是一次问候" in content:
+                    content = content.split("（这是一次问候")[0].strip()
+            
             tool_calls = m.get("tool_calls") or []
             tool_names = []
             try:
@@ -2425,6 +2813,10 @@ def create_app(manager: AgentManager) -> FastAPI:
         agent = await asyncio.to_thread(manager.get, user_id)
         loop = asyncio.get_event_loop()
 
+        # 标记本次生成开始，并记录"用户消息"作为重连时的锚点
+        manager.live_begin(user_id, message)
+        manager.live_push(user_id, {"type": "user_echo", "content": message})
+
         async def event_stream() -> AsyncGenerator[str, None]:
             queue: asyncio.Queue = asyncio.Queue()
             SENTINEL = object()
@@ -2436,17 +2828,21 @@ def create_app(manager: AgentManager) -> FastAPI:
                         et = ev.get("type") if isinstance(ev, dict) else None
                         if et and et.startswith("_"):
                             continue
+                        manager.live_push(user_id, ev)
                         loop.call_soon_threadsafe(queue.put_nowait, ev)
                 except Exception as e:
                     logger.exception("chat_stream 异常")
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait, {"type": "error", "message": str(e)}
-                    )
+                    err_ev = {"type": "error", "message": str(e)}
+                    manager.live_push(user_id, err_ev)
+                    loop.call_soon_threadsafe(queue.put_nowait, err_ev)
                 finally:
                     try:
                         _persist_runtime_state(agent)
                     except Exception:
                         logger.exception("保存 Agent 运行状态失败")
+                    done_ev = {"type": "done"}
+                    manager.live_push(user_id, done_ev)
+                    manager.live_end(user_id)
                     loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
 
             t = threading.Thread(target=producer, daemon=True)
@@ -2701,6 +3097,61 @@ def create_app(manager: AgentManager) -> FastAPI:
             }
         return {"ok": True, "msg": "暂无容量分析结果", "candidate_count": 0, "positive_count": 0, "results": []}
 
+    @app.post("/api/storage/capacity-analysis/llm-review")
+    async def capacity_llm_review(req: dict, x_auth_user: str | None = Header(default=None)):
+        """对已有候选方案做 LLM 评审；不重新跑数学计算。
+
+        请求体：
+            user_id (可选): 多用户隔离
+            user_preference (可选): 用户偏好约束
+            apply (可选, 默认 true): 评审通过后是否覆盖 best 并刷新收益
+        """
+        user_id = _effective_user_id(req.get("user_id"), x_auth_user)
+        user_preference = str(req.get("user_preference") or "").strip()
+        apply = _bool_param(req.get("apply", True))
+        agent = await asyncio.to_thread(manager.get, user_id)
+
+        def _do_review() -> dict:
+            current = _load_capacity(agent) or {}
+            results = current.get("results") or getattr(agent.state, "capacity_analysis", None) or []
+            if not results:
+                raise HTTPException(400, "暂无候选方案可供评审，请先运行容量分析")
+            proxy_result = {
+                "results": results,
+                "best": current.get("best") or next((r for r in results if r.get("is_best")), results[0]),
+                "load_profile": current.get("load_profile") or {},
+                "assumptions": current.get("assumptions") or {},
+            }
+            review = llm_review_capacity(
+                proxy_result,
+                getattr(agent.state, "llm_client", None),
+                user_preference=user_preference,
+            )
+            if not review:
+                raise HTTPException(400, "无候选方案可供评审")
+            current["llm_review"] = review
+            if apply and review.get("ok") and review.get("chosen_config"):
+                chosen = review["chosen_config"]
+                current["best"] = chosen
+                df = _normalize_bill_df(agent.state.electricity_df)
+                storage = agent.state.config.storage_config
+                best_cfg = build_optimal_config_from_record(chosen, storage)
+                agent.state.optimal_config = best_cfg
+                if not df.empty:
+                    agent.state.revenue_report = agent.state.analyzer.analyze(best_cfg, df)
+                agent.state.investor_report = None
+                agent.state.md_report = None
+            persisted = _persist_capacity(agent, current)
+            try:
+                if apply and review.get("ok"):
+                    persisted["revenue_model"] = _refresh_revenue_for_current_capacity(agent, user_id)
+            except Exception as exc:
+                logger.exception("LLM 评审后刷新收益失败: %s", exc)
+                persisted["revenue_sync_error"] = str(exc)
+            return persisted
+
+        return await asyncio.to_thread(_do_review)
+
     @app.get("/api/revenue/model")
     async def get_revenue_model(user_id: str | None = None, x_auth_user: str | None = Header(default=None)):
         user_id = _effective_user_id(user_id, x_auth_user)
@@ -2735,7 +3186,10 @@ def create_app(manager: AgentManager) -> FastAPI:
         if not data:
             data = await asyncio.to_thread(_refresh_revenue_for_current_capacity, agent, user_id)
         package = await asyncio.to_thread(_build_revenue_report_package, agent, data)
-        path = Path(package["zip_path"])
+        token = str(package.get("zip_url", "")).split("token=", 1)[-1]
+        path = _REPORT_DOWNLOAD_TOKENS.get(token)
+        if path is None:
+            raise HTTPException(500, "报告生成成功但下载链接失效")
         return FileResponse(
             str(path),
             media_type="application/zip",
@@ -2752,16 +3206,31 @@ def create_app(manager: AgentManager) -> FastAPI:
         return await asyncio.to_thread(_build_revenue_report_package, agent, data)
 
     @app.get("/api/reports/download")
-    async def download_report_file(user_id: str | None = None, path: str = "", x_auth_user: str | None = Header(default=None)):
+    async def download_report_file(
+        user_id: str | None = None,
+        token: str = "",
+        path: str = "",
+        x_auth_user: str | None = Header(default=None),
+    ):
         user_id = _effective_user_id(user_id, x_auth_user)
-        raw = str(path or "").strip()
-        if not raw:
-            raise HTTPException(400, "path 不能为空")
-        rel = Path(raw)
-        if rel.is_absolute() or ".." in rel.parts:
-            raise HTTPException(400, "非法报告路径")
         reports_dir = (DATA_ROOT / "output" / "reports" / user_id).resolve()
-        target = (reports_dir / rel).resolve()
+
+        raw_token = str(token or "").strip()
+        if raw_token:
+            target = _REPORT_DOWNLOAD_TOKENS.get(raw_token)
+            if target is None:
+                raise HTTPException(404, "报告下载链接已失效")
+            target = target.resolve()
+        else:
+            # Backward-compatible fallback for old pages; path is still sandboxed.
+            raw = str(path or "").strip()
+            if not raw:
+                raise HTTPException(400, "token 不能为空")
+            rel = Path(raw)
+            if rel.is_absolute() or ".." in rel.parts:
+                raise HTTPException(400, "非法报告路径")
+            target = (reports_dir / rel).resolve()
+
         if reports_dir not in target.parents and target != reports_dir:
             raise HTTPException(400, "非法报告路径")
         if not target.exists() or not target.is_file():

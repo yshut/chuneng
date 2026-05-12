@@ -3,6 +3,8 @@
 LLM不可用时自动回退到现有的DocumentParser + DataExtractor。
 """
 
+from __future__ import annotations
+
 import base64
 import io
 import json

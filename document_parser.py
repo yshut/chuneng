@@ -2,6 +2,8 @@
 支持读取PDF、Word、图片等各类文件，提取电费数据。
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import Optional

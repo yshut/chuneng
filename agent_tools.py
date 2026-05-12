@@ -30,8 +30,10 @@ from typing import Any, Callable, Optional
 import pandas as pd
 
 from capacity_gpt55 import analyze_capacity_with_bill_method, build_optimal_config_from_record, result_brief
+from capacity_llm_review import llm_review_capacity
 from config import AgentConfig, ElectricityRateConfig, StorageConfig, InvestorConfig
 from data_extractor import DataExtractor, ElectricityBillData
+from demo_data import create_demo_df
 from document_parser import DocumentParser
 from revenue_analyzer import (
     InvestorCustomerReport,
@@ -66,6 +68,7 @@ class AgentState:
     investor_report: Optional[InvestorCustomerReport] = None
     md_report: Optional[str] = None
     capacity_analysis: Optional[list[dict]] = None
+    capacity_context: Optional[dict] = None
 
     # 可选：LLM 文档解析器、报告生成器、长期记忆
     llm_parser: Any = None
@@ -555,8 +558,18 @@ def _tool_analyze_storage_capacity_bill_method(
     demand_realization_rate: float = 0.5,
     demand_power_cap_ratio: float = 0.75,
     candidate_schemes: Optional[list[dict]] = None,
+    use_llm_review: bool = False,
+    user_preference: str = "",
 ) -> dict:
-    """按逐月峰谷套利 + 需量兑现 + 边际收益拐点口径测算储能容量。"""
+    """按逐月峰谷套利 + 需量兑现 + 边际收益拐点口径测算储能容量。
+
+    Parameters
+    ----------
+    use_llm_review : bool
+        是否在数值结果之上再让大模型做一次综合评审。开启后会增加 1 次 LLM 调用。
+    user_preference : str
+        传给大模型的偏好/约束（例如"预算<=300万"、"优先回收期"）。
+    """
     if state.electricity_df is None or state.electricity_df.empty:
         return {"error": "请先用 parse_files / use_demo_data / parse_natural_language 加载电费数据"}
 
@@ -573,13 +586,84 @@ def _tool_analyze_storage_capacity_bill_method(
         },
     )
     state.capacity_analysis = result.get("results") or []
+    state.capacity_context = {
+        "load_profile": result.get("load_profile") or {},
+        "assumptions": result.get("assumptions") or {},
+    }
     best = result.get("best") or {}
+
+    llm_review: Optional[dict] = None
+    if use_llm_review and result.get("results"):
+        llm_review = llm_review_capacity(result, state.llm_client, user_preference=user_preference)
+        # 如果 LLM 给出有效推荐，覆盖 best
+        if llm_review and llm_review.get("ok") and llm_review.get("chosen_config"):
+            best = llm_review["chosen_config"]
+        result["llm_review"] = llm_review
+
     if best:
         state.optimal_config = build_optimal_config_from_record(best, state.config.storage_config)
         state.revenue_report = state.analyzer.analyze(state.optimal_config, state.electricity_df)
         state.investor_report = None
         state.md_report = None
-    return result_brief(result)
+
+    brief = result_brief(result)
+    if llm_review is not None:
+        # 给 LLM 工具结果一个精简版的 review（避免 raw_reply 噪声进对话）
+        if llm_review.get("ok"):
+            brief["llm_review"] = {
+                "ok": True,
+                "chosen_index": llm_review.get("chosen_index"),
+                "agrees_with_numerical": llm_review.get("agrees_with_numerical"),
+                "reasoning": llm_review.get("reasoning"),
+                "key_metrics": llm_review.get("key_metrics"),
+                "risks": llm_review.get("risks"),
+                "comparison": llm_review.get("comparison"),
+                "backup_recommendations": llm_review.get("backup_recommendations"),
+                "next_steps": llm_review.get("next_steps"),
+                "chosen_config": {
+                    "battery_capacity_kwh": (llm_review.get("chosen_config") or {}).get("battery_capacity_kwh"),
+                    "inverter_power_kw": (llm_review.get("chosen_config") or {}).get("inverter_power_kw"),
+                    "annual_revenue_yuan": (llm_review.get("chosen_config") or {}).get("annual_revenue_yuan"),
+                    "payback_years": (llm_review.get("chosen_config") or {}).get("payback_years"),
+                    "irr_percent": (llm_review.get("chosen_config") or {}).get("irr_percent"),
+                },
+            }
+        else:
+            brief["llm_review"] = {"ok": False, "error": llm_review.get("error"), "fallback": True}
+    return brief
+
+
+def _tool_llm_recommend_capacity(
+    state: AgentState,
+    user_preference: str = "",
+) -> dict:
+    """让大模型基于已计算的容量候选方案，输出推荐和详细推理。
+
+    依赖已经跑过 analyze_storage_capacity_bill_method 的 state.capacity_analysis。
+    返回 chosen_index / reasoning / key_metrics / risks / backup_recommendations 等。
+    """
+    if not state.capacity_analysis:
+        return {"error": "请先调用 analyze_storage_capacity_bill_method 生成候选方案"}
+    # 重新组装一份满足 llm_review_capacity 期望结构的 dict
+    ctx = state.capacity_context or {}
+    proxy_result = {
+        "results": state.capacity_analysis,
+        "best": next((r for r in state.capacity_analysis if r.get("is_best")), state.capacity_analysis[0]),
+        "load_profile": ctx.get("load_profile") or {},
+        "assumptions": ctx.get("assumptions") or {},
+    }
+    review = llm_review_capacity(proxy_result, state.llm_client, user_preference=user_preference)
+    if not review:
+        return {"error": "无候选方案可供评审"}
+    if review.get("ok") and review.get("chosen_config"):
+        chosen = review["chosen_config"]
+        state.optimal_config = build_optimal_config_from_record(chosen, state.config.storage_config)
+        state.revenue_report = state.analyzer.analyze(state.optimal_config, state.electricity_df) if state.electricity_df is not None else None
+        state.investor_report = None
+        state.md_report = None
+    # 不回传 raw_reply 以减少 token
+    review.pop("raw_reply", None)
+    return review
 
 
 def _tool_analyze_revenue(state: AgentState) -> dict:
@@ -645,12 +729,13 @@ def _tool_compare_scenarios(state: AgentState, scenarios: list[dict],
     total = len(scenarios)
 
     for i, sc in enumerate(scenarios):
-        name = sc.pop("name", f"方案{i+1}") if isinstance(sc, dict) else f"方案{i+1}"
+        scenario = dict(sc) if isinstance(sc, dict) else {}
+        name = scenario.pop("name", f"方案{i+1}")
         if on_progress:
             on_progress({"step": i + 1, "total": total, "phase": "computing", "name": name})
 
         # 临时覆盖
-        for k, v in sc.items():
+        for k, v in scenario.items():
             if hasattr(state.config.storage_config, k):
                 setattr(state.config.storage_config, k, v)
             elif hasattr(state.config.rate_config, k):
@@ -796,6 +881,54 @@ def _tool_get_current_state(state: AgentState) -> dict:
         "当前电价配置": state.config.rate_config.__dict__,
         "当前投资模式": state.config.investor_config.investment_mode,
         "电池成本_元每kWh": state.config.storage_config.battery_cost_per_kwh,
+    }
+
+
+def _tool_get_data_summary(state: AgentState) -> dict:
+    """返回已加载电费数据的简要画像，供子 Agent 验证数据质量。"""
+    df = state.electricity_df
+    if df is None or df.empty:
+        return {"error": "尚未加载电费数据，请先使用 parse_files / use_demo_data / parse_natural_language"}
+
+    def col_sum(name: str) -> float:
+        if name not in df.columns:
+            return 0.0
+        return round(float(pd.to_numeric(df[name], errors="coerce").fillna(0).sum()), 2)
+
+    def col_max(name: str) -> float:
+        if name not in df.columns:
+            return 0.0
+        return round(float(pd.to_numeric(df[name], errors="coerce").fillna(0).max()), 2)
+
+    months = []
+    if "月份" in df.columns:
+        months = [str(v) for v in df["月份"].dropna().tolist()]
+
+    total_kwh = col_sum("总电量(kWh)")
+    tou = {
+        "尖峰电量(kWh)": col_sum("尖峰电量(kWh)"),
+        "高峰电量(kWh)": col_sum("高峰电量(kWh)"),
+        "平段电量(kWh)": col_sum("平段电量(kWh)"),
+        "谷段电量(kWh)": col_sum("谷段电量(kWh)"),
+    }
+    tou_total = sum(tou.values())
+    tou_ratio = {
+        k: round(v / tou_total, 4) if tou_total > 0 else 0.0
+        for k, v in tou.items()
+    }
+
+    return {
+        "row_count": int(len(df)),
+        "columns": list(df.columns),
+        "month_start": min(months) if months else "",
+        "month_end": max(months) if months else "",
+        "total_kwh": total_kwh,
+        "total_amount_yuan": col_sum("总电费(元)"),
+        "max_demand_kw": col_max("最大需量(kW)"),
+        "contract_capacity_kva_max": col_max("合同容量(kVA)"),
+        "tou_kwh": tou,
+        "tou_ratio": tou_ratio,
+        "has_price_columns": any(c.endswith("电价(元/kWh)") for c in df.columns),
     }
 
 
@@ -949,6 +1082,13 @@ def build_default_registry() -> ToolRegistry:
     ))
 
     reg.register(Tool(
+        name="get_data_summary",
+        description="查看当前已加载电费数据的行数、账期、总电量、总电费、最大需量和分时电量占比，用于验证数据质量。",
+        parameters={"type": "object", "properties": {}, "required": []},
+        func=_tool_get_data_summary,
+    ))
+
+    reg.register(Tool(
         name="update_rate_config",
         description="更新电价配置（尖峰/高峰/平段/谷段电价、需量电费）。只需传要修改的字段。",
         parameters={
@@ -1013,7 +1153,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="analyze_storage_capacity_bill_method",
-        description="参考 GPT5.5 的账单测算法：按逐月分时电价计算峰谷套利，需量收益按兑现率折算，并用边际收益拐点推荐容量。适合用户问为什么容量和人工测算/GPT5.5不一致，或要求按账单重新测算容量。",
+        description="参考 GPT5.5 的账单测算法：按逐月分时电价计算峰谷套利，需量收益按兑现率折算，并用边际收益拐点推荐容量。适合用户问为什么容量和人工测算/GPT5.5不一致，或要求按账单重新测算容量。可选 use_llm_review=True 让大模型在候选清单上做综合评审并给出推荐+理由。",
         parameters={
             "type": "object",
             "properties": {
@@ -1026,10 +1166,34 @@ def build_default_registry() -> ToolRegistry:
                     "items": {"type": "object"},
                     "description": "候选方案，如 [{'power_kw':1250,'capacity_kwh':2500}]；为空时用 0.5-3.5MW/2h 默认档位",
                 },
+                "use_llm_review": {
+                    "type": "boolean",
+                    "description": "是否让大模型在数值结果之上再做一次综合评审（开启会多 1 次 LLM 调用），默认 False",
+                },
+                "user_preference": {
+                    "type": "string",
+                    "description": "传给大模型的偏好/约束，例如「预算不超过300万」、「优先回收期」、「需要日均放电>3000kWh」",
+                },
             },
             "required": [],
         },
         func=_tool_analyze_storage_capacity_bill_method,
+    ))
+
+    reg.register(Tool(
+        name="llm_recommend_capacity",
+        description="基于已经测算出来的候选方案，让大模型综合 IRR、回收期、NPV、边际收益、投资规模等给出推荐容量和详细推理。需先调用 analyze_storage_capacity_bill_method。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "user_preference": {
+                    "type": "string",
+                    "description": "用户偏好/约束，例如「预算300万以内」、「优先回收期」、「目标 IRR > 12%」",
+                },
+            },
+            "required": [],
+        },
+        func=_tool_llm_recommend_capacity,
     ))
 
     reg.register(Tool(
@@ -1744,35 +1908,4 @@ def _bills_to_df(bills: list[ElectricityBillData]) -> pd.DataFrame:
 
 
 def _create_demo_df() -> pd.DataFrame:
-    import numpy as np
-    np.random.seed(42)
-    months = [f"2025-{m:02d}" for m in range(1, 13)]
-    base_total = 500000
-    records = []
-    for i, month in enumerate(months):
-        season_factor = 1.0 + 0.2 * np.sin((i - 1) * np.pi / 6)
-        total = base_total * season_factor * (1 + np.random.uniform(-0.05, 0.05))
-        peak = total * np.random.uniform(0.08, 0.12)
-        high = total * np.random.uniform(0.25, 0.35)
-        flat = total * np.random.uniform(0.30, 0.40)
-        valley = total - peak - high - flat
-        max_demand = total / 30 / 16 * np.random.uniform(1.2, 1.5)
-        contract_cap = max_demand * 1.2
-        energy_charge = (peak * 1.2 + high * 1.0 + flat * 0.65 + valley * 0.35)
-        demand_charge = max_demand * 38
-        records.append({
-            "月份": month,
-            "总电量(kWh)": round(total, 2),
-            "尖峰电量(kWh)": round(peak, 2),
-            "高峰电量(kWh)": round(high, 2),
-            "平段电量(kWh)": round(flat, 2),
-            "谷段电量(kWh)": round(valley, 2),
-            "最大需量(kW)": round(max_demand, 2),
-            "合同容量(kVA)": round(contract_cap, 2),
-            "总电费(元)": round(energy_charge + demand_charge, 2),
-            "电量电费(元)": round(energy_charge, 2),
-            "需量电费(元)": round(demand_charge, 2),
-            "容量电费(元)": 0,
-            "功率因数": round(np.random.uniform(0.88, 0.95), 2),
-        })
-    return pd.DataFrame(records)
+    return create_demo_df()

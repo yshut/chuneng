@@ -30,9 +30,9 @@ def estimate_co2_reduction(state, grid_factor: float = DEFAULT_GRID_EMISSION_FAC
     if cfg is None:
         return {"error": "请先调用 optimize_storage 计算储能配置"}
 
-    daily_discharge = cfg.daily_discharge_kwh or 0
+    daily_discharge = getattr(cfg, "daily_discharge_kwh", 0) or 0
     annual_discharge = daily_discharge * 365
-    project_years = state.config.storage_config.project_life_years
+    project_years = getattr(state.config.storage_config, "project_life_years", 15) or 15
 
     # 储能并不直接减排（其充电时本身用电），但实际上：
     # - 谷段充电时电网负荷低，多为火电基荷；峰段放电替代尖峰煤电/气电

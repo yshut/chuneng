@@ -15,6 +15,7 @@ env/
 .idea/
 .vscode/
 .cursor/
+.claude/
 .DS_Store
 Thumbs.db
 *.swp
@@ -24,14 +25,16 @@ dist/
 build/
 *.egg-info/
 
-# 本项目运行时数据（勿提交用户记忆、向量库、上传文件）
+# 本项目运行时数据（勿提交用户记忆、向量库、上传文件、API Key）
 output/
 input/*
 !input/.gitkeep
+data/
 chromadb_data/
 .chroma/
 *.sqlite3
 *.db
+llm_config.json
 
 # 日志
 *.log

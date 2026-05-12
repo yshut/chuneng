@@ -225,7 +225,7 @@ class KnowledgeBase:
             recall_k = max(1, k)
 
         q_emb = self.embedder.encode([query])[0]
-        where = {"source": source_filter} if source_filter else None
+        where = {"source": {"$eq": source_filter}} if source_filter else None
         try:
             res = self._collection.query(
                 query_embeddings=[q_emb],

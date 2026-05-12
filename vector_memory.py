@@ -1,8 +1,8 @@
 """储能配置AGENT - 向量记忆模块
 基于 ChromaDB 持久化 + 嵌入模型，实现海量历史的语义检索。
 
-与 FileMemory 互补：
-- FileMemory：人类可读的"流水账"，按时间窗口注入 prompt
+与层级记忆互补：
+- HierarchicalMemory：人类可读的工作记忆、摘要、事实和工具日志
 - VectorMemory：海量历史的语义检索，按相似度返回最相关 K 条
 
 embedding 优先级（自动降级）：

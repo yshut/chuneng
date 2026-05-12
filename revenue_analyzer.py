@@ -3,6 +3,7 @@
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -621,17 +622,25 @@ class RevenueAnalyzer:
     @staticmethod
     def _compute_irr_simple(cash_flows: list, max_iter: int = 1000, tol: float = 1e-8) -> float:
         """简单IRR计算（牛顿法）。"""
+        if not cash_flows or not any(cf < 0 for cf in cash_flows) or not any(cf > 0 for cf in cash_flows):
+            return 0.0
         rate = 0.1
         for _ in range(max_iter):
+            if rate <= -0.99:
+                rate = -0.9
             npv = sum(cf / (1 + rate) ** i for i, cf in enumerate(cash_flows))
             dnpv = sum(-i * cf / (1 + rate) ** (i + 1) for i, cf in enumerate(cash_flows))
             if abs(dnpv) < 1e-12:
                 break
             new_rate = rate - npv / dnpv
+            if not math.isfinite(new_rate):
+                break
+            if new_rate <= -0.99:
+                new_rate = -0.9
             if abs(new_rate - rate) < tol:
                 return new_rate
             rate = new_rate
-        return rate
+        return rate if math.isfinite(rate) else 0.0
 
     def export_investor_report(self, investor_report: InvestorCustomerReport, output_path: str) -> Path:
         """导出资方/客户收益分析到Excel。"""
