@@ -2,7 +2,7 @@
 (() => {
   const C = window.AgentCommon;
   const { $, escapeHtml, fmtNumber, fmtNumberOrDash, fmtCompact, fmtMoney,
-          api, toast, refreshUsers, resolveCurrentUser, skeleton,
+          api, toast, refreshUsers, resolveCurrentUser, getUrlUser, skeleton,
           enableSortInContainer, mountBackToTop } = C;
 
   const els = {
@@ -29,7 +29,7 @@
     shareWrap: $('share-wrap'),
   };
 
-  const urlUser = new URLSearchParams(location.search).get('user');
+  const urlUser = getUrlUser();
   let currentUser = urlUser || 'main';
   let latestParams = {};
   let paramHistory = [];

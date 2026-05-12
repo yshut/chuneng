@@ -226,6 +226,11 @@
   // ============================================================
   // User session
   // ============================================================
+  C.getUrlUser = function getUrlUser() {
+    const qs = new URLSearchParams(location.search);
+    return qs.get('user_id') || qs.get('user') || '';
+  };
+
   C.resolveCurrentUser = async function resolveCurrentUser(urlUser, fallback = 'main') {
     if (urlUser) return urlUser;
     try {

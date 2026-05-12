@@ -5,7 +5,7 @@
 (() => {
   const C = window.AgentCommon;
   const { $, escapeHtml, fmtNumber, fmtCompact, api, readErrorMessage,
-          toast, refreshUsers, resolveCurrentUser, uploadWithProgress,
+          toast, refreshUsers, resolveCurrentUser, getUrlUser, uploadWithProgress,
           renderUploadProgress, renderUploadPending, bindTabs, skeleton,
           emptyState } = C;
 
@@ -42,7 +42,7 @@
   };
 
   // ---------- 状态 ----------
-  const urlUser = new URLSearchParams(location.search).get('user');
+  const urlUser = getUrlUser();
   let currentUser = urlUser || 'main';
   let chatAbortController = null;
   let currentAsstBubble = null;       // 当前 assistant 主气泡（流式追加）
@@ -91,7 +91,13 @@
     return b;
   }
 
+  function hideWelcome() {
+    const ws = document.getElementById('welcome-state');
+    if (ws) ws.remove();
+  }
+
   function pushUserMessage(text) {
+    hideWelcome();
     const inner = makeMsg('user');
     const b = addBubble(inner);
     b.textContent = text;
@@ -236,9 +242,17 @@
       const msgs = r.messages || [];
       if (!msgs.length) {
         els.chatList.innerHTML =
-          '<div class="muted" style="padding:24px;text-align:center;">' +
-          '👋 欢迎！这是用户 <b>' + escapeHtml(currentUser) +
-          '</b> 的对话窗口。说点什么开始吧。</div>';
+          '<div class="welcome-state" id="welcome-state">' +
+          '<div class="welcome-icon">⚡</div>' +
+          '<div class="welcome-title">储能配置智能体</div>' +
+          '<div class="welcome-sub">上传电费账单，AI 自动解析、配置储能容量、测算投资收益。支持自然语言交互，随时调整参数。</div>' +
+          '<div class="welcome-hints">' +
+          '<span class="welcome-hint" data-hint="帮我分析这个月的电费账单">📄 分析电费账单</span>' +
+          '<span class="welcome-hint" data-hint="我们工厂月用电50万度，帮我配储能">🔋 配置储能方案</span>' +
+          '<span class="welcome-hint" data-hint="测算一下 EMC 模式下的投资收益">💰 测算投资收益</span>' +
+          '<span class="welcome-hint" data-hint="对比一下不同容量方案的收益差异">📊 对比方案差异</span>' +
+          '</div></div>';
+        bindWelcomeHints();
         return;
       }
       for (const m of msgs) {
@@ -700,6 +714,20 @@
       });
     });
   }
+
+  // ---------- 欢迎提示 ----------
+  function bindWelcomeHints() {
+    document.querySelectorAll('.welcome-hint').forEach((el) => {
+      el.addEventListener('click', () => {
+        const hint = el.getAttribute('data-hint');
+        if (hint) {
+          els.msgInput.value = hint;
+          els.msgInput.focus();
+        }
+      });
+    });
+  }
+  bindWelcomeHints();
 
   // ---------- 初始化 ----------
   async function init() {

@@ -4,9 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>储能 AGENT</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23161922'/%3E%3Ctext x='50' y='62' font-size='48' text-anchor='middle'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
-<link rel="stylesheet" href="/static/shared.css?v=20260512-llmfix" />
-<link rel="stylesheet" href="/static/style.css?v=20260512-llmfix" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23111420'/%3E%3Ctext x='50' y='62' font-size='48' text-anchor='middle'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/static/shared.css?v=20260513-awesomeui" />
+<link rel="stylesheet" href="/static/style.css?v=20260513-awesomeui" />
 </head>
 <body>
 <header class="topbar">
@@ -14,9 +14,9 @@
     <span class="logo">⚡</span>
     <span class="title">储能 AGENT</span>
     <span class="subtitle">智能体 · ReAct · 多 Agent · RAG</span>
-    <a class="top-link" href="/bills">账单解析</a>
-    <a class="top-link" href="/capacity">容量配置</a>
-    <a class="top-link" href="/revenue">收益测算</a>
+    <a class="top-link" href="/bills">📊 账单解析</a>
+    <a class="top-link" href="/capacity">🔋 容量配置</a>
+    <a class="top-link" href="/revenue">💰 收益测算</a>
   </div>
   <div class="user-bar">
     <label>用户</label>
@@ -29,7 +29,19 @@
 <main class="layout">
   <!-- 左：聊天 -->
   <section class="chat-pane" aria-label="对话窗口">
-    <div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-atomic="false"></div>
+    <div id="chat-list" class="chat-list" role="log" aria-live="polite" aria-atomic="false">
+      <div class="welcome-state" id="welcome-state">
+        <div class="welcome-icon">⚡</div>
+        <div class="welcome-title">储能配置智能体</div>
+        <div class="welcome-sub">上传电费账单，AI 自动解析、配置储能容量、测算投资收益。支持自然语言交互，随时调整参数。</div>
+        <div class="welcome-hints">
+          <span class="welcome-hint" data-hint="帮我分析这个月的电费账单">📄 分析电费账单</span>
+          <span class="welcome-hint" data-hint="我们工厂月用电50万度，帮我配储能">🔋 配置储能方案</span>
+          <span class="welcome-hint" data-hint="测算一下 EMC 模式下的投资收益">💰 测算投资收益</span>
+          <span class="welcome-hint" data-hint="对比一下不同容量方案的收益差异">📊 对比方案差异</span>
+        </div>
+      </div>
+    </div>
 
     <div class="composer">
       <div class="upload-bar">
@@ -53,7 +65,7 @@
       <div class="action-row">
         <button id="clear-btn" class="btn btn-mini">清空对话</button>
         <button id="reset-btn" class="btn btn-mini btn-warn">彻底重置（当前用户）</button>
-        <span class="hint">提示：思考过程中点其它按钮、切换面板都不会卡，因为 SSE + 异步队列。</span>
+        <span class="hint">思考过程中可随时切换面板、上传文件，不会阻塞</span>
       </div>
     </div>
   </section>
@@ -70,23 +82,23 @@
 
     <div class="tab-pane workflow-pane" data-pane="workflow">
       <div class="flow-card agent-card">
-        <span class="flow-step">参数调整</span>
-        <h3>Agent 临时调参窗口</h3>
-        <p>左侧对话用于临时修改电价、成本、分成、贷款等假设，也可以让 Agent 重新解析或重算。</p>
+        <span class="flow-step">💬 对话</span>
+        <h3>Agent 临时调参</h3>
+        <p>在左侧对话中修改电价、成本、分成、贷款等假设，或让 Agent 重新解析/重算。</p>
       </div>
       <a class="flow-card flow-link" href="/bills">
         <span class="flow-step">Step 1</span>
-        <h3>电费账单解析</h3>
-        <p>上传账单，自动解析电量、电费、峰平谷、需量和账期，历史结果会保存到本地数据盘。</p>
+        <h3>📄 电费账单解析</h3>
+        <p>上传账单，自动解析电量、电费、峰平谷、需量和账期，历史结果保存到本地。</p>
       </a>
       <a class="flow-card flow-link" href="/capacity">
         <span class="flow-step">Step 2</span>
-        <h3>储能容量配置分析</h3>
-        <p>根据账单峰谷情况扫描多个容量和时长组合，输出推荐配置及所有候选方案数据。</p>
+        <h3>🔋 储能容量配置</h3>
+        <p>根据账单峰谷扫描多个容量和时长组合，输出推荐配置及候选方案数据。</p>
       </a>
       <a class="flow-card flow-link" href="/revenue">
         <span class="flow-step">Step 3</span>
-        <h3>投资收益测算</h3>
+        <h3>💰 投资收益测算</h3>
         <p>测算峰谷套利、需量收益、客户分成、贷款影响、现金流和敏感性分析。</p>
       </a>
     </div>
@@ -150,7 +162,7 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="/static/common.js?v=20260512-llmfix"></script>
-<script src="/static/app.js?v=20260512-llmfix"></script>
+<script src="/static/common.js?v=20260513-awesomeui"></script>
+<script src="/static/app.js?v=20260513-awesomeui"></script>
 </body>
 </html>

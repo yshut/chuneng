@@ -2,7 +2,7 @@
 (() => {
   const C = window.AgentCommon;
   const { $, escapeHtml, fmtNumber, fmtCompact, api, readErrorMessage,
-          toast, refreshUsers, resolveCurrentUser, uploadWithProgress,
+          toast, refreshUsers, resolveCurrentUser, getUrlUser, uploadWithProgress,
           renderUploadProgress, renderUploadPending,
           renderMonthlyChart, renderTouChart,
           renderCapacityCallout, renderCapacityTable,
@@ -31,7 +31,7 @@
     capacityTableWrap: $('capacity-table-wrap'),
   };
 
-  const urlUser = new URLSearchParams(location.search).get('user');
+  const urlUser = getUrlUser();
   let currentUser = urlUser || 'main';
   let latestBills = null;
   let billProgressItems = new Map();

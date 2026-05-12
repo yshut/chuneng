@@ -2,7 +2,7 @@
 (() => {
   const C = window.AgentCommon;
   const { $, escapeHtml, fmtNumber, fmtCompact, api,
-          toast, refreshUsers, resolveCurrentUser,
+          toast, refreshUsers, resolveCurrentUser, getUrlUser,
           renderCapacityCallout, renderCapacityTable,
           skeleton, emptyState, enableSortInContainer } = C;
 
@@ -22,7 +22,7 @@
     llmReviewBtn: $('llm-review-btn'),
     llmRecommendation: $('llm-recommendation'),
   };
-  const urlUser = new URLSearchParams(location.search).get('user');
+  const urlUser = getUrlUser();
   let currentUser = urlUser || 'main';
 
   async function refreshUsersList() {
