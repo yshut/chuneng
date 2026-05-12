@@ -52,11 +52,29 @@
   let userRefreshSeq = 0;
   // 续接（断线重连）控制
   let liveResumeAbort = false;
+  let intentionalChatAbort = false;
+  let pageIsUnloading = false;
 
   // ---------- 工具函数 ----------
   function scrollChatBottom() {
     requestAnimationFrame(() => {
       els.chatList.scrollTop = els.chatList.scrollHeight;
+    });
+  }
+
+  function removeTransientDisconnectErrors() {
+    document.querySelectorAll('.evt.tool-error').forEach((node) => {
+      const text = (node.textContent || '').toLowerCase();
+      const isTransient = (
+        text.includes('请求出错') &&
+        (
+          text.includes('network error') ||
+          text.includes('failed to fetch') ||
+          text.includes('networkerror') ||
+          text.includes('load failed')
+        )
+      );
+      if (isTransient) node.remove();
     });
   }
 
@@ -477,6 +495,7 @@
     setSending(true);
 
     chatAbortController = new AbortController();
+    intentionalChatAbort = false;
 
     try {
       const res = await fetch('/api/chat', {
@@ -508,13 +527,30 @@
         }
       }
     } catch (e) {
-      if (e.name === 'AbortError') {
+      const isAbort = e.name === 'AbortError';
+      const message = String(e.message || '').toLowerCase();
+      const isBrowserDisconnect = (
+        pageIsUnloading ||
+        document.visibilityState === 'hidden' ||
+        message === 'network error' ||
+        message.includes('failed to fetch') ||
+        message.includes('networkerror') ||
+        message.includes('load failed')
+      );
+      if (isAbort && intentionalChatAbort) {
         addEvtBlock(currentAsstContainer, 'tool-error', '⛔ 已停止', '');
+      } else if (isAbort || isBrowserDisconnect) {
+        liveResumeAbort = false;
+        removeTransientDisconnectErrors();
+        if (!pageIsUnloading && document.visibilityState === 'visible') {
+          setTimeout(() => { tryResumeLiveGeneration(); }, 500);
+        }
       } else {
         addEvtBlock(currentAsstContainer, 'tool-error', '❌ 请求出错', escapeHtml(e.message));
       }
     } finally {
       chatAbortController = null;
+      intentionalChatAbort = false;
       endAsstMessage();
       currentAsstAcc = '';
       setSending(false);
@@ -592,10 +628,19 @@
 
   function stopChat() {
     if (chatAbortController) {
+      intentionalChatAbort = true;
       chatAbortController.abort();
       chatAbortController = null;
     }
     liveResumeAbort = true;
+  }
+
+  function markPageLeaving() {
+    pageIsUnloading = true;
+    if (chatAbortController) {
+      chatAbortController.abort();
+      chatAbortController = null;
+    }
   }
 
   // ---------- 事件绑定 ----------
@@ -713,6 +758,23 @@
         else if (tab === 'files') refreshFiles();
       });
     });
+
+    window.addEventListener('pagehide', markPageLeaving);
+    window.addEventListener('beforeunload', markPageLeaving);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && chatAbortController) {
+        markPageLeaving();
+      } else if (document.visibilityState === 'visible') {
+        pageIsUnloading = false;
+        removeTransientDisconnectErrors();
+        tryResumeLiveGeneration();
+      }
+    });
+    window.addEventListener('pageshow', () => {
+      pageIsUnloading = false;
+      removeTransientDisconnectErrors();
+      tryResumeLiveGeneration();
+    });
   }
 
   // ---------- 欢迎提示 ----------
@@ -736,6 +798,7 @@
     await refreshUsersList();
     currentUser = els.userSelect.value || 'main';
     await loadHistory();
+    removeTransientDisconnectErrors();
     refreshState();
     refreshMemory();
     refreshKb();
