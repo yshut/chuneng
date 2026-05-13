@@ -98,6 +98,48 @@
     scrollChatBottom();
   }
 
+  // 首次进入 / 切到新用户：渲染欢迎界面 + 示例问题
+  const EXAMPLE_PROMPTS = [
+    { icon: '📄', title: '解析账单',
+      text: '帮我解析 input/ 里的电费账单，提取峰平谷电量和电费。' },
+    { icon: '⚡', title: '推荐容量配置',
+      text: '基于账单峰谷情况，推荐一个储能容量配置，并调用大模型给出最优解。' },
+    { icon: '💰', title: '收益测算',
+      text: '按峰谷套利 + 客户分成 70% 测算 10 年现金流、IRR 和回本周期。' },
+    { icon: '🧠', title: '修改参数',
+      text: '把贷款比例改成 70%、利率 4.5%、年限 8 年，重新算一次收益。' },
+  ];
+
+  function renderEmptyChatState() {
+    const cards = EXAMPLE_PROMPTS.map((p, i) =>
+      `<button type="button" class="example-prompt" data-idx="${i}">
+         <span class="ep-icon">${p.icon}</span>
+         <span class="ep-body">
+           <span class="ep-title">${escapeHtml(p.title)}</span>
+           <span class="ep-text">${escapeHtml(p.text)}</span>
+         </span>
+       </button>`).join('');
+    els.chatList.innerHTML =
+      `<div class="welcome-state">
+         <div class="welcome-hero">
+           <div class="welcome-logo">⚡</div>
+           <h2>你好，<b>${escapeHtml(currentUser)}</b></h2>
+           <p class="welcome-sub">这是一个本地多 Agent 储能分析助手，可以帮你解析账单、推荐容量、测算收益。</p>
+         </div>
+         <div class="example-grid">${cards}</div>
+         <p class="welcome-tip muted">点击上面任意卡片即可发送，或直接在下方输入你的问题。</p>
+       </div>`;
+    els.chatList.querySelectorAll('.example-prompt').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.idx);
+        const item = EXAMPLE_PROMPTS[idx];
+        if (!item) return;
+        els.msgInput.value = item.text;
+        els.msgInput.focus();
+      });
+    });
+  }
+
   function startAsstMessage() {
     currentAsstContainer = makeMsg('asst');
     currentAsstBubble = null;
@@ -235,10 +277,7 @@
       if (seq !== userRefreshSeq) return;
       const msgs = r.messages || [];
       if (!msgs.length) {
-        els.chatList.innerHTML =
-          '<div class="muted" style="padding:24px;text-align:center;">' +
-          '👋 欢迎！这是用户 <b>' + escapeHtml(currentUser) +
-          '</b> 的对话窗口。说点什么开始吧。</div>';
+        renderEmptyChatState();
         return;
       }
       for (const m of msgs) {

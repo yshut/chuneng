@@ -111,6 +111,33 @@
     }
   }
 
+  async function fetchAndRenderDiagnose(targetEl) {
+    if (!targetEl) return;
+    try {
+      const diag = await api('/api/llm/diagnose');
+      const envRows = Object.entries(diag.env_vars || {}).map(([prov, info]) => `
+        <tr>
+          <td>${escapeHtml(prov)}</td>
+          <td><code>${escapeHtml(info.env_key || '-')}</code></td>
+          <td>${info.present ? `<span class="ok">已设置</span> (${info.length} 字符, ${escapeHtml(info.masked || '')})` : '<span class="bad">未设置</span>'}</td>
+        </tr>`).join('');
+      const suggestions = (diag.suggestions || []).map((s) => `<li>${escapeHtml(s)}</li>`).join('');
+      targetEl.innerHTML = `
+        <div class="llm-diag">
+          <p><b>初始化状态：</b>${diag.ok ? '<span class="ok">就绪</span>' : `<span class="bad">不可用 — ${escapeHtml(diag.init_reason || '未知')}</span>`}</p>
+          <p><b>当前 Provider：</b>${escapeHtml(diag.provider || '-')} ｜ <b>Base URL：</b>${escapeHtml(diag.current_config?.base_url || '-')}</p>
+          <p><b>持久化文件：</b><code>${escapeHtml(diag.persisted_file || '-')}</code> ${diag.persisted_exists ? '存在' : '不存在'}</p>
+          <table class="llm-diag-table">
+            <thead><tr><th>Provider</th><th>环境变量名</th><th>状态</th></tr></thead>
+            <tbody>${envRows}</tbody>
+          </table>
+          ${suggestions ? `<div class="llm-diag-tips"><b>修复建议：</b><ol>${suggestions}</ol></div>` : ''}
+        </div>`;
+    } catch (e) {
+      targetEl.innerHTML = `<p class="muted">诊断获取失败：${escapeHtml(e.message)}</p>`;
+    }
+  }
+
   function renderLLMRecommendation(review, rows) {
     if (!review) {
       els.llmRecommendation.innerHTML = '';
@@ -121,7 +148,12 @@
         <div class="llm-rec-card llm-rec-error">
           <div class="llm-rec-head"><span class="llm-rec-badge">AI 评审</span><b>未完成</b></div>
           <p class="muted">${escapeHtml(review.error || '大模型未能给出有效推荐，已回退到数值最优解。')}</p>
+          <div class="llm-diag-wrap">
+            <div class="llm-diag-loading muted">正在加载诊断信息...</div>
+          </div>
         </div>`;
+      const diagWrap = els.llmRecommendation.querySelector('.llm-diag-wrap');
+      if (diagWrap) fetchAndRenderDiagnose(diagWrap);
       return;
     }
     const idx = Number.isFinite(review.chosen_index) ? review.chosen_index : -1;

@@ -29,10 +29,11 @@ PROVIDER_DEFAULTS = {
         "env_key": "BAIDU_API_KEY",
     },
     # 小米 MiMo（OpenAI Chat Completions 兼容）
-    # 官方 Token Plan（新加坡）：https://token-plan-sgp.xiaomimimo.com/v1
-    # 也可设环境变量 MIMO_BASE_URL 指向其它兼容入口（如自建/第三方中转）。
+    # 默认走 yshut 自建中转：https://api.yshut.cn/v1
+    # 想换其它入口（官方 token-plan-sgp.xiaomimimo.com/v1 或第三方）时，
+    # 设置环境变量 MIMO_BASE_URL 即可覆盖。
     "mimo": {
-        "base_url": "https://token-plan-sgp.xiaomimimo.com/v1",
+        "base_url": "https://api.yshut.cn/v1",
         "model": "MiMo-V2.5-Pro",
         "vision_model": "MiMo-V2.5-Pro",
         "env_key": "MIMO_API_KEY",

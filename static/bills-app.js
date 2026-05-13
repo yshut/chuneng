@@ -20,6 +20,8 @@
     billStatus: $('bill-status'),
     billProgress: $('bill-progress'),
     billSummary: $('bill-summary'),
+    billDetails: $('bill-details'),
+    billDetailsGrid: $('bill-details-grid'),
     billChart: $('bill-chart'),
     billTouChart: $('bill-tou-chart'),
     billTableWrap: $('bill-table-wrap'),
@@ -250,6 +252,7 @@
     }
 
     renderBillSummary(latestBills.summary || {});
+    renderBillDetails(rows, latestBills.summary || {});
     renderBillTable(rows, latestBills.columns || []);
     requestAnimationFrame(() => renderBillCharts(rows, latestBills.summary || {}));
   }
@@ -266,6 +269,91 @@
     els.billSummary.innerHTML = cards.map(([label, value]) =>
       `<div class="metric"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`
     ).join('');
+  }
+
+  // ---------- 详细数据面板：分时电量 / 分时电价 / 费用构成 ----------
+  function renderBillDetails(rows, summary) {
+    if (!els.billDetails || !els.billDetailsGrid) return;
+    if (!rows || !rows.length) {
+      els.billDetails.classList.add('hidden');
+      els.billDetailsGrid.innerHTML = '';
+      return;
+    }
+    els.billDetails.classList.remove('hidden');
+
+    const sum = (key) => rows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+    const avgNonZero = (key) => {
+      const vals = rows.map((r) => Number(r[key]) || 0).filter((v) => v > 0);
+      return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+    };
+
+    const tou = summary.tou || {};
+    const totalKwh = (tou.peak + tou.high + tou.flat + tou.valley) || sum('总电量(kWh)') || 0;
+    const pct = (v) => totalKwh > 0 ? `${fmtNumber((v / totalKwh) * 100, 1)}%` : '-';
+
+    const prices = summary.prices || {
+      peak: avgNonZero('尖峰电价(元/kWh)'),
+      high: avgNonZero('高峰电价(元/kWh)'),
+      flat: avgNonZero('平段电价(元/kWh)'),
+      valley: avgNonZero('谷段电价(元/kWh)'),
+      demand: avgNonZero('需量电价(元/kW·月)'),
+    };
+
+    const energyFee = sum('电量电费(元)');
+    const demandFee = sum('需量电费(元)');
+    const capacityFee = sum('容量电费(元)');
+    const totalFee = (energyFee + demandFee + capacityFee) || sum('总电费(元)') || 0;
+    const feePct = (v) => totalFee > 0 ? `${fmtNumber((v / totalFee) * 100, 1)}%` : '-';
+
+    const powerFactor = avgNonZero('功率因数');
+    const contractCap = avgNonZero('合同容量(kVA)');
+    const peakValleyRatio = prices.valley > 0 ? prices.peak / prices.valley : 0;
+
+    const section = (title, items, tone) => `
+      <div class="bill-detail-section ${tone ? `bill-detail-${tone}` : ''}">
+        <div class="bill-detail-title">${escapeHtml(title)}</div>
+        <div class="bill-detail-cards">
+          ${items.map(([label, value, sub]) => `
+            <div class="bill-detail-card">
+              <span class="bill-detail-label">${escapeHtml(label)}</span>
+              <b class="bill-detail-value">${escapeHtml(value)}</b>
+              ${sub ? `<small class="bill-detail-sub">${escapeHtml(sub)}</small>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+
+    els.billDetailsGrid.innerHTML = [
+      section('分时电量', [
+        ['尖峰', `${fmtCompact(tou.peak)} kWh`, `占比 ${pct(tou.peak)}`],
+        ['高峰', `${fmtCompact(tou.high)} kWh`, `占比 ${pct(tou.high)}`],
+        ['平段', `${fmtCompact(tou.flat)} kWh`, `占比 ${pct(tou.flat)}`],
+        ['谷段', `${fmtCompact(tou.valley)} kWh`, `占比 ${pct(tou.valley)}`],
+      ], 'energy'),
+      section('分时电价（账单平均）', [
+        ['尖峰电价', `${fmtNumber(prices.peak || 0, 4)} 元/kWh`, ''],
+        ['高峰电价', `${fmtNumber(prices.high || 0, 4)} 元/kWh`, ''],
+        ['平段电价', `${fmtNumber(prices.flat || 0, 4)} 元/kWh`, ''],
+        ['谷段电价', `${fmtNumber(prices.valley || 0, 4)} 元/kWh`, ''],
+        ['峰谷价差倍数', peakValleyRatio > 0 ? `${fmtNumber(peakValleyRatio, 2)} ×` : '-',
+          peakValleyRatio >= 4 ? '套利空间充足' : peakValleyRatio >= 3 ? '套利可行' : '套利偏弱'],
+      ], 'price'),
+      section('费用构成', [
+        ['电量电费', `${fmtCompact(energyFee)} 元`, `占 ${feePct(energyFee)}`],
+        ['需量电费', `${fmtCompact(demandFee)} 元`, `占 ${feePct(demandFee)}`],
+        ['容量电费', `${fmtCompact(capacityFee)} 元`, `占 ${feePct(capacityFee)}`],
+        ['需量电价', prices.demand > 0 ? `${fmtNumber(prices.demand, 2)} 元/kW·月` : '-', ''],
+      ], 'cost'),
+      section('其它指标', [
+        ['平均功率因数', powerFactor > 0 ? fmtNumber(powerFactor, 3) : '-',
+          powerFactor >= 0.95 ? '达标' : powerFactor > 0 ? '可能罚款' : ''],
+        ['合同容量', contractCap > 0 ? `${fmtCompact(contractCap)} kVA` : '-', ''],
+        ['年化总电费', `${fmtCompact(totalFee * (12 / Math.max(rows.length, 1)))} 元`,
+          `按 ${rows.length} 月折算`],
+        ['年化总电量', `${fmtCompact(totalKwh * (12 / Math.max(rows.length, 1)))} kWh`,
+          `按 ${rows.length} 月折算`],
+      ], 'misc'),
+    ].join('');
   }
 
   function renderBillCharts(rows, summary) {

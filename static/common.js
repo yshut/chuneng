@@ -249,6 +249,16 @@
     return active;
   };
 
+  C.syncSessionSettingsControls = function syncSessionSettingsControls(root = document) {
+    const source = document.getElementById('user-select');
+    const mirror = root.querySelector('[data-session-user-select]');
+    if (!source || !mirror) return;
+    mirror.innerHTML = Array.from(source.options || []).map((opt) =>
+      `<option value="${C.escapeHtml(opt.value)}" ${opt.selected ? 'selected' : ''}>${C.escapeHtml(opt.textContent || opt.value)}</option>`
+    ).join('');
+    mirror.value = source.value;
+  };
+
   // ============================================================
   // Debounce
   // ============================================================
@@ -269,7 +279,16 @@
     const rect = canvas.getBoundingClientRect();
     const parentW = canvas.parentElement ? canvas.parentElement.clientWidth : minWidth;
     const width = Math.max(minWidth, Math.round(rect.width || parentW || minWidth));
-    const height = Math.max(minHeight, Number(canvas.getAttribute('height')) || minHeight);
+    // 响应式高度：HTML 上的 height 属性作为"目标高度"，但在窄屏(<560px)按等比缩放
+    // 避免出现"画布很窄但高度仍是 240"的瘦高条
+    const targetH = Number(canvas.getAttribute('height')) || minHeight;
+    let height = Math.max(minHeight, targetH);
+    if (width < 560) {
+      // 在手机/窄屏上，让高度跟着宽度等比收缩，保持长宽比
+      const baseW = 600; // 设计稿假定的基准宽度
+      height = Math.max(minHeight, Math.round(targetH * (width / baseW)));
+    }
+    canvas.style.height = `${height}px`;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -689,11 +708,24 @@
   // ============================================================
   C.openLLMSettings = async function openLLMSettings() {
     let config = null;
+    let configLoadError = '';
     try {
       config = await C.api('/api/llm/config');
     } catch (err) {
-      C.toast(`读取 LLM 配置失败：${C.errorMessage(err)}`, 'error');
-      return;
+      configLoadError = C.errorMessage(err);
+      config = {
+        provider: 'mimo',
+        base_url: '',
+        model: 'mimo-v2.5-pro',
+        vision_model: '',
+        temperature: 0.7,
+        max_tokens: 2048,
+        api_key_set: false,
+        client_ok: false,
+        client_error: configLoadError,
+        providers: ['qwen', 'wenxin', 'mimo', 'openai_compat'],
+        provider_defaults: {},
+      };
     }
 
     const providers = Array.isArray(config.providers) && config.providers.length
@@ -710,6 +742,7 @@
     const form = document.createElement('form');
     form.className = 'llm-form';
     form.autocomplete = 'off';
+    const canManageUsers = !!document.getElementById('user-select');
 
     const providerOptions = providers
       .map((p) => {
@@ -720,6 +753,12 @@
       .join('');
 
     const renderBanner = (cfg) => {
+      if (configLoadError) {
+        return `<div class="llm-banner llm-banner-warn">
+          <b>LLM 配置暂时读取失败。</b>${C.escapeHtml(configLoadError)}
+          <br />会话设置仍可使用；模型配置保存前请确认后端服务正常。
+        </div>`;
+      }
       if (!cfg.api_key_set) {
         return `<div class="llm-banner llm-banner-warn">
           <b>尚未配置 API Key。</b>
@@ -747,6 +786,29 @@
       : '尚未配置，请填入 API Key。';
 
     form.innerHTML = `
+      ${canManageUsers ? `
+        <section class="settings-section session-settings-section">
+          <div class="settings-section-head">
+            <h3>会话设置</h3>
+            <span class="llm-badge" data-llm-badge-inline>加载中...</span>
+          </div>
+          <div class="session-settings-grid">
+            <label class="llm-field">
+              <span>当前用户</span>
+              <select data-session-user-select></select>
+            </label>
+            <label class="llm-field">
+              <span>新用户名</span>
+              <input data-session-new-user type="text" placeholder="新用户名" autocomplete="off" />
+            </label>
+            <button type="button" class="btn btn-primary session-create-btn" data-session-create-user>+ 新建</button>
+          </div>
+        </section>
+      ` : ''}
+      <section class="settings-section">
+        <div class="settings-section-head">
+          <h3>模型设置</h3>
+        </div>
       <div class="llm-banner-wrap">${renderBanner(config)}</div>
       <div class="llm-grid">
         <label class="llm-field">
@@ -789,10 +851,15 @@
                  value="${Number(config.max_tokens ?? 2048)}" />
         </label>
       </div>
+      </section>
       <div class="llm-status" aria-live="polite"></div>
     `;
 
     const bannerWrap = form.querySelector('.llm-banner-wrap');
+    const inlineBadge = form.querySelector('[data-llm-badge-inline]');
+    const sessionSelect = form.querySelector('[data-session-user-select]');
+    const sessionInput = form.querySelector('[data-session-new-user]');
+    const sessionCreateBtn = form.querySelector('[data-session-create-user]');
     const keyInput = form.querySelector('input[name="api_key"]');
     const providerSelect = form.querySelector('select[name="provider"]');
     const baseUrlInput = form.querySelector('input[name="base_url"]');
@@ -800,6 +867,45 @@
     const visionInput = form.querySelector('input[name="vision_model"]');
     const keyToggle = form.querySelector('.llm-key-toggle');
     const keyClearBtn = form.querySelector('.llm-key-clear');
+    if (inlineBadge) {
+      inlineBadge.classList.remove('llm-badge-ok', 'llm-badge-warn');
+      inlineBadge.classList.add(config.client_ok ? 'llm-badge-ok' : 'llm-badge-warn');
+      inlineBadge.textContent = config.client_ok
+        ? (config.model || config.provider || 'LLM')
+        : (config.api_key_set ? `${config.model || config.provider || 'LLM'} · 未就绪` : '未配置 API Key');
+      inlineBadge.title = config.client_ok
+        ? `Provider: ${config.provider || '-'}\nBase URL: ${config.base_url || '-'}`
+        : (config.client_error || '请检查 LLM 配置');
+    }
+    C.syncSessionSettingsControls(form);
+    if (sessionSelect) {
+      sessionSelect.addEventListener('change', () => {
+        const source = document.getElementById('user-select');
+        if (!source) return;
+        source.value = sessionSelect.value;
+        source.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
+    if (sessionCreateBtn && sessionInput) {
+      const createUser = () => {
+        const sourceInput = document.getElementById('new-user-input');
+        const sourceBtn = document.getElementById('add-user-btn');
+        if (!sourceInput || !sourceBtn) return;
+        sourceInput.value = sessionInput.value.trim();
+        sourceBtn.click();
+        sessionInput.value = '';
+        [160, 500, 1000].forEach((ms) => {
+          setTimeout(() => C.syncSessionSettingsControls(form), ms);
+        });
+      };
+      sessionCreateBtn.addEventListener('click', createUser);
+      sessionInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          createUser();
+        }
+      });
+    }
     keyToggle.addEventListener('click', () => {
       const isPwd = keyInput.type === 'password';
       keyInput.type = isPwd ? 'text' : 'password';
@@ -866,6 +972,10 @@
       footer: [cancelBtn, testBtn, saveBtn],
       size: 'lg',
     });
+    if (canManageUsers) {
+      const titleEl = modal.dialog.querySelector('.modal-title');
+      if (titleEl) titleEl.textContent = '设置';
+    }
 
     cancelBtn.addEventListener('click', () => modal.close('cancel'));
 
@@ -996,6 +1106,28 @@
   };
 
   // 页面加载后自动挂载
+  C.mountLLMSettingsButton = function mountAppSettingsButton() {
+    if (document.querySelector('[data-llm-settings-mounted]')) return;
+    const host = document.querySelector('.page-head .actions, .topbar, .page-head, header');
+    if (!host) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'llm-settings-wrap';
+    wrap.setAttribute('data-llm-settings-mounted', '1');
+    wrap.innerHTML = `
+      <button type="button" class="btn btn-ghost llm-settings-btn"
+              data-llm-settings-btn aria-label="设置" title="设置">
+        <span aria-hidden="true">⚙</span>
+        <span class="llm-settings-text">设置</span>
+      </button>
+    `;
+    host.appendChild(wrap);
+    wrap.querySelector('[data-llm-settings-btn]').addEventListener('click', () => {
+      C.openLLMSettings();
+    });
+    C.api('/api/llm/config').then((cfg) => C._updateLLMBadge(cfg)).catch(() => {});
+  };
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => C.mountLLMSettingsButton());
   } else {

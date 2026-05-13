@@ -22,8 +22,8 @@ REM      enter the key via the gear icon in the top bar.
 set "KEY_PRESENT=yes"
 if "%MIMO_API_KEY%"=="" set "KEY_PRESENT=no"
 
-REM Optional override; falls back to the official default when empty.
-if "%MIMO_BASE_URL%"=="" set "MIMO_BASE_URL=https://token-plan-sgp.xiaomimimo.com/v1"
+REM Optional override; falls back to the project default (api.yshut.cn) when empty.
+if "%MIMO_BASE_URL%"=="" set "MIMO_BASE_URL=https://api.yshut.cn/v1"
 
 REM ---- Port (change if 7860 is taken) ----
 set "PORT=7860"
@@ -63,6 +63,17 @@ if "%KEY_PRESENT%"=="no" (
 echo.
 echo Starting... browser will open in a few seconds.
 echo Close this window or press Ctrl+C to stop the server.
+echo.
+
+REM ---- Quick sanity check: confirm Python sees the env var (cmd-side view) ----
+echo [DIAG] cmd-side env probe:
+echo        MIMO_API_KEY length = %MIMO_API_KEY:~0,0%[hidden]
+if defined MIMO_API_KEY (
+    echo        MIMO_API_KEY is set in this shell.
+) else (
+    echo        MIMO_API_KEY is NOT set in this shell.
+)
+echo        MIMO_BASE_URL = %MIMO_BASE_URL%
 echo.
 
 REM ---- Open browser after 4s so uvicorn has time to bind ----

@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import os
+import sys
 import re
 import shutil
 import tempfile
@@ -2642,6 +2643,90 @@ def create_app(manager: AgentManager) -> FastAPI:
             logger.exception("更新 LLM 配置失败")
             raise HTTPException(500, f"保存配置失败: {exc}")
         return {"ok": True, "config": data}
+
+    @app.get("/api/llm/diagnose")
+    async def diagnose_llm():
+        """完整诊断 LLM 配置状态：环境变量、持久化文件、客户端初始化结果。
+
+        当用户报告"AI 不能用"时，先访问这个端点能 90% 定位问题。
+        """
+        try:
+            from llm_client import PROVIDER_DEFAULTS, LLMClient  # type: ignore
+        except Exception as exc:
+            return {"ok": False, "stage": "import", "error": f"无法加载 llm_client：{exc}"}
+
+        lc = manager.config.llm_config
+        # 1) 环境变量：列出所有 provider 对应的 env_key 状态
+        env_state = {}
+        for prov, defaults in PROVIDER_DEFAULTS.items():
+            key_name = defaults.get("env_key", "")
+            value = os.environ.get(key_name, "") if key_name else ""
+            env_state[prov] = {
+                "env_key": key_name,
+                "present": bool(value),
+                "length": len(value),
+                "masked": _mask_api_key(value) if value else "",
+            }
+        mimo_base = os.environ.get("MIMO_BASE_URL", "")
+
+        # 2) 持久化文件
+        persisted = _load_llm_config_file()
+        persisted_safe = {k: v for k, v in (persisted or {}).items() if k != "api_key"}
+        if persisted and persisted.get("api_key"):
+            persisted_safe["api_key"] = _mask_api_key(persisted["api_key"])
+
+        # 3) 内存中的当前配置
+        current = {
+            "provider": lc.provider,
+            "base_url": lc.base_url or PROVIDER_DEFAULTS.get(lc.provider, {}).get("base_url", ""),
+            "model": lc.model,
+            "api_key_in_config": _mask_api_key(lc.api_key) if lc.api_key else "",
+            "api_key_in_config_present": bool(lc.api_key),
+        }
+
+        # 4) 实际能否初始化 LLMClient（核心判断）
+        client = LLMClient(lc)
+        init_ok = client.available
+        init_reason = ""
+        if not init_ok:
+            env_key = PROVIDER_DEFAULTS.get(lc.provider, {}).get("env_key", "")
+            env_val = os.environ.get(env_key, "") if env_key else ""
+            if not (lc.api_key or env_val):
+                init_reason = f"未找到 API Key（既没在配置文件里，也没设环境变量 {env_key}）"
+            elif not current["base_url"]:
+                init_reason = "未配置 Base URL"
+            else:
+                init_reason = "OpenAI SDK 创建客户端失败（可能是 base_url 格式错误，或 SDK 未安装）"
+
+        # 5) 给出具体的修复建议
+        suggestions = []
+        if not init_ok:
+            env_key = PROVIDER_DEFAULTS.get(lc.provider, {}).get("env_key", "")
+            if not env_state.get(lc.provider, {}).get("present"):
+                suggestions.append(
+                    f"在 cmd 里执行 `setx {env_key} sk-你的密钥`，然后**关掉所有 cmd 窗口和当前服务**，重新打开 cmd 启动 start-web.cmd"
+                )
+                suggestions.append(
+                    f"或者临时使用：在 cmd 里 `set {env_key}=sk-...` 后立刻 `start-web.cmd`（同一窗口）"
+                )
+                suggestions.append("或者在网页右上角 ⚙ 设置里填入 API Key（会保存到 data/llm_config.json）")
+            if persisted and persisted.get("api_key"):
+                suggestions.append("如果之前在网页保存过错的 key，访问 `POST /api/llm/clear-key` 或在 ⚙ 设置里点'清空'按钮")
+
+        return {
+            "ok": init_ok,
+            "init_reason": init_reason,
+            "provider": lc.provider,
+            "env_vars": env_state,
+            "mimo_base_url_env": mimo_base,
+            "persisted_file": str(LLM_CONFIG_FILE),
+            "persisted_exists": LLM_CONFIG_FILE.exists(),
+            "persisted_content": persisted_safe,
+            "current_config": current,
+            "suggestions": suggestions,
+            "data_root": str(DATA_ROOT),
+            "python_executable": str(getattr(sys, "executable", "")),
+        }
 
     @app.post("/api/llm/clear-key")
     async def clear_llm_key():

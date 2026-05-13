@@ -7,7 +7,14 @@
       "Bash(python main.py --demo --no-llm)",
       "Bash(python main.py --demo --no-llm --investment-mode loan --loan-ratio 0.7)",
       "Bash(python main.py --demo --no-llm --investment-mode emc --investor-share 0.7 --customer-share 0.3)",
-      "Bash(python -c \"from main import EnergyStorageAgent; print\\('Import OK'\\)\")"
+      "Bash(python -c \"from main import EnergyStorageAgent; print\\('Import OK'\\)\")",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(gh search *)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(gh repo *)",
+      "Bash(curl -s https://api.github.com/repos/shadcn-ui/ui)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f\\\\\"Name: {d['full_name']}\\\\nDescription: {d.get\\('description','N/A'\\)}\\\\nStars: {d['stargazers_count']}\\\\nForks: {d['forks_count']}\\\\nLanguage: {d.get\\('language','N/A'\\)}\\\\nLicense: {d.get\\('license',{}\\).get\\('name','N/A'\\)}\\\\nTopics: {', '.join\\(d.get\\('topics',[]\\)\\)}\\\\nURL: {d['html_url']}\\\\nHomepage: {d.get\\('homepage','N/A'\\)}\\\\nCreated: {d['created_at']}\\\\nUpdated: {d['updated_at']}\\\\\"\\)\")"
     ]
   }
 }

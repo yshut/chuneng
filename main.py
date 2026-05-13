@@ -412,11 +412,11 @@ def main():
     parser.add_argument("--llm-provider",
                         choices=["qwen", "wenxin", "mimo", "openai_compat"],
                         default="qwen",
-                        help="大模型供应商：qwen / wenxin / mimo（小米 MiMo，官方默认 token-plan-sgp）/ openai_compat（通用OpenAI兼容）")
+                        help="大模型供应商：qwen / wenxin / mimo（小米 MiMo，默认走 api.yshut.cn 中转）/ openai_compat（通用OpenAI兼容）")
     parser.add_argument("--llm-model", default=None,
                         help="覆盖模型名，例如 MiMo-V2.5-Pro / MiMo-V2.5 / qwen-plus / gpt-4o-mini")
     parser.add_argument("--llm-base-url", default=None,
-                        help="覆盖 base_url，例如 https://token-plan-sgp.xiaomimimo.com/v1 或第三方中转")
+                        help="覆盖 base_url，例如 https://api.yshut.cn/v1 或官方 https://token-plan-sgp.xiaomimimo.com/v1")
     parser.add_argument("--llm-key", default=None,
                         help="覆盖 API Key（不建议在命令行明文传，优先用环境变量）")
     parser.add_argument("--no-llm", action="store_true", help="禁用LLM，纯规则模式运行")

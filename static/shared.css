@@ -56,6 +56,38 @@
   --duration-fast: 0.15s;
   --duration: 0.22s;
   --duration-slow: 0.36s;
+
+  /* —— 固定字号：避免控件和表格随视口宽度放大后挤压布局 —— */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 26px;
+
+  /* —— 间距 token —— */
+  --space-2xs: 4px;
+  --space-xs: 6px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  /* —— 触摸目标尺寸（苹果 HIG: 最小 44px） —— */
+  --tap-min: 44px;
+
+  /* —— 断点（仅供 JS 读取参考，CSS 内仍用 @media） ——
+     bp-mobile: ≤768px, bp-tablet: ≤1024px, bp-laptop: ≤1280px, bp-wide: ≥1600px */
+}
+
+/* 大屏 (≥1280px)：稍微放大基础字号 */
+@media (min-width: 1280px) {
+  :root {
+    --fs-base: 14px;
+    --fs-md: 15px;
+  }
 }
 
 /* ============================================================
@@ -63,14 +95,18 @@
    ============================================================ */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
-html { -webkit-text-size-adjust: 100%; }
+html {
+  -webkit-text-size-adjust: 100%;
+  /* iOS Safari 点按高亮（透明 = 自定义 active 样式接管） */
+  -webkit-tap-highlight-color: transparent;
+}
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
                'Microsoft YaHei', Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -162,6 +198,52 @@ textarea:focus-visible {
 .small-btn { min-height: 30px; padding: 5px 10px; font-size: 12px; }
 .wide-btn { width: 100%; }
 
+/* —— 触摸设备自适应：放大所有交互目标到 ≥44px，并禁用悬停态 —— */
+@media (pointer: coarse), (hover: none) {
+  .btn, .top-link, .tab-btn, .back-link, .modal-close {
+    min-height: var(--tap-min);
+  }
+  .btn { padding: 10px 16px; }
+  .btn-mini, .small-btn { min-height: 38px; padding: 8px 14px; }
+  input[type="text"],
+  input[type="number"],
+  input[type="search"],
+  input:not([type]),
+  select, textarea {
+    min-height: var(--tap-min);
+    font-size: 16px; /* iOS Safari ≥16px 不会自动放大整页 */
+  }
+  /* 触摸设备不要 hover 抬起效果 —— 卡片在滚动时会闪烁 */
+  .metric:hover, .top-link:hover, .flow-link:hover {
+    transform: none !important;
+  }
+}
+
+/* 按钮按下反馈（手机端代替 hover） */
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 0.08s;
+}
+
+/* 所有可滚动区域：防止 iOS 橡皮筋拽动外层页面 */
+.chat-list, .bill-table-wrap, .capacity-table-wrap,
+.modal-body, .side-pane, .workspace,
+[class*="-scroll"], [data-scrollable] {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* —— 超大屏 (≥1600px)：业务页可以限宽，首页工作台保持满宽 —— */
+@media (min-width: 1600px) {
+  .bill-page, .analysis-page {
+    max-width: 1880px;
+    margin: 0 auto;
+  }
+  .topbar, .page-head {
+    padding-inline: clamp(16px, 4vw, 60px);
+  }
+}
+
 /* ============================================================
    表单元素
    ============================================================ */
@@ -171,6 +253,7 @@ input[type="search"],
 input:not([type]),
 select,
 textarea {
+  color-scheme: dark;
   min-height: 36px;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -705,6 +788,41 @@ html.modal-open {
    LLM 设置表单
    ============================================================ */
 .llm-form { display: flex; flex-direction: column; gap: 14px; }
+.settings-section {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+}
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.settings-section-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.settings-section-head .llm-badge {
+  flex: 0 1 auto;
+  max-width: 180px;
+}
+.session-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.session-create-btn {
+  min-height: 38px;
+  align-self: end;
+}
 .llm-banner-wrap:empty { display: none; }
 .llm-banner {
   padding: 10px 12px;
@@ -835,6 +953,8 @@ html.modal-open {
 
 @media (max-width: 640px) {
   .llm-grid { grid-template-columns: 1fr; }
+  .session-settings-grid { grid-template-columns: 1fr; }
+  .session-create-btn { width: 100%; }
   .llm-settings-text { display: none; }
   .llm-badge { max-width: 120px; }
 }
